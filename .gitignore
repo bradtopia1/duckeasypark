@@ -1,5 +1,16 @@
-   .env
-   .venv/
-   venv/
-   __pycache__/
-   .idea/
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.idea/
+
+# Runtime output (clips, cropped cars, flagged inspectors)
+output/
+
+# Operator-supplied and generated videos. Never commit these - they can be
+# huge (a single dashcam clip can be hundreds of MB).
+samples/
+
+# Trained models are large binaries; keep them out of git by default
+models/

@@ -1,0 +1,94 @@
+# duckeasypark configuration
+# ---------------------------------------------------------------------------
+# Every value here has a sensible default, so you only need to set what you
+# care about. Paths are resolved relative to this file.
+# ---------------------------------------------------------------------------
+
+# Which mode to run. Only "test" is implemented for now.
+mode: test
+
+# --------------------------------------------------------------------------- #
+# Motion detection - applies to every mode.
+# --------------------------------------------------------------------------- #
+motion:
+  # 0.0 = least sensitive, 1.0 = most sensitive.
+  # Higher values lower the background-subtraction threshold and shrink the
+  # minimum blob size, so fainter / smaller movement is picked up.
+  sensitivity: 0.5
+
+  # Minimum blob size, as a percentage of the monitored area. Filters out
+  # sensor noise and tiny flickers.
+  min_area_percent: 0.4
+
+  # Consecutive motion frames required before a clip starts recording.
+  trigger_frames: 2
+
+  # Region of interest, as percentages of the frame. Each axis accepts either:
+  #   * a single number -> a centred band of that size   (e.g. 60)
+  #   * [start, end]    -> an explicit span              (e.g. [15, 95])
+  area:
+    vertical: [10, 100]     # % of frame height, top -> bottom
+    horizontal: [0, 100]    # % of frame width,  left -> right
+
+  # Seconds of video kept before / after a motion event.
+  clip:
+    pre_seconds: 1.0
+    post_seconds: 1.5
+
+# --------------------------------------------------------------------------- #
+# Processing resolution. The single biggest speed/memory knob.
+# --------------------------------------------------------------------------- #
+processing:
+  # Downscale frames to this width before motion detection, and save clips at
+  # the same size. null = keep the source resolution.
+  # Lower is much faster (roughly with the square of the reduction) and uses
+  # less RAM; too low and small/distant movement gets missed. 640 is a good
+  # starting point for a 1080p camera.
+  width: 640
+  # Take the car crop from the ORIGINAL full-resolution frame (sharper crops
+  # for the inspector model) instead of the downscaled one. Ignored if width
+  # is null.
+  full_res_crops: true
+
+# --------------------------------------------------------------------------- #
+# AI backends. Both default to `none`, so the app is motion-only: it records a
+# clip for every motion event and stops. Nothing is detected and no model is
+# loaded. Turn a stage on once you have a real model - or use the mocks to try
+# the full path (they are fake by construction).
+# --------------------------------------------------------------------------- #
+detectors:
+  car:
+    backend: none                 # none | mock | opencv_dnn | yolo (last two: not wired up yet)
+    # options:                    # only used by the mock backend
+    #   confidence: 0.9
+    #   expand: 0.15              # grow the motion box into a car-sized box
+
+  inspector:
+    backend: none                 # none | mock | tflite
+    # Mock backend (positive_probability 1.0 flags EVERY car, 0.0 flags none):
+    # options:
+    #   positive_probability: 1.0
+    #   seed: 1234
+    # TFLite backend (your trained model):
+    # options:
+    #   model_path: models/inspector.tflite
+    #   labels: [not_inspector, inspector]
+    #   input_size: [224, 224]
+    #   normalize: "0-1"            # "0-1" | "-1-1" | "none"
+
+# Where clips, cropped cars and flagged inspectors are written.
+output_dir: output
+
+# --------------------------------------------------------------------------- #
+# Per-mode settings.
+# --------------------------------------------------------------------------- #
+modes:
+  test:
+    # Your video file, used instead of a live camera (relative to this file).
+    # Point this at your own recording. No video yet? Generate a synthetic clip
+    # for testing with: python scripts/make_sample_video.py
+    video_path: samples/test.mp4
+    loop: false                   # restart from the start when the file ends
+    realtime: false               # sleep to play back at the file's native FPS
+    show_preview: false           # needs a GUI build of OpenCV (see README.md)
+    max_seconds: null             # stop after N seconds of source (null = no cap)

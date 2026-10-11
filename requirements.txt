@@ -1,0 +1,12 @@
+# Core runtime dependencies.
+numpy>=1.24
+PyYAML>=6.0
+# opencv-python-headless is the light choice for a Raspberry Pi (no GUI libs).
+# For the debug preview window (show_preview: true) use "opencv-python" instead.
+opencv-python-headless>=4.8
+
+# --- Optional: only needed when detectors.inspector.backend == "tflite" -------
+# On a Raspberry Pi (recommended, much smaller than full TensorFlow):
+#   tflite-runtime
+# On a dev machine:
+#   tensorflow

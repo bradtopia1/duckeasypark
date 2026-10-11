@@ -1,0 +1,375 @@
+"""The detection pipeline: motion -> clip -> car -> crop -> inspector -> action.
+
+The pipeline is deliberately backend-agnostic: it only talks to the
+:class:`~duckeasypark.detectors.base.CarDetector` and
+:class:`~duckeasypark.classifiers.base.InspectorClassifier` interfaces, so the
+mocks used today can be swapped for real models via config.
+
+Speed/memory notes
+------------------
+Frames are downscaled to ``processing.width`` before motion detection, and the
+saved clips use that same downscaled size (a big win on a Pi 3B). The car crop
+can still be taken from the original full-resolution frame via
+``processing.full_res_crops``. Clips are streamed to disk as an event unfolds,
+so memory stays bounded regardless of how long an event lasts - only the
+pre-roll ring buffer and a single "best" frame are held.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections import deque
+from dataclasses import dataclass, field, replace
+from datetime import datetime
+from pathlib import Path
+from typing import Callable, List, Optional, Tuple
+
+import cv2
+import numpy as np
+
+from .classifiers.base import ClassificationResult, InspectorClassifier
+from .config import AppConfig
+from .crop import crop_bbox
+from .detectors.base import CarDetector, Detection
+from .motion import BBox, MotionDetector, MotionResult
+from .video import FrameSource, make_fourcc
+
+logger = logging.getLogger("duckeasypark.pipeline")
+
+CAR_CROP_PAD = 0.05
+
+
+@dataclass
+class InspectorAlert:
+    """Everything known about a car that was flagged as a parking inspector."""
+
+    timestamp: str
+    clip_path: Path
+    car_image_path: Path
+    inspector_image_path: Path
+    car_detection: Detection
+    classification: ClassificationResult
+
+
+ActionHook = Callable[[InspectorAlert], None]
+
+
+@dataclass
+class RunStats:
+    frames_processed: int = 0
+    motion_events: int = 0
+    cars_detected: int = 0
+    inspectors_flagged: int = 0
+    clips: List[Path] = field(default_factory=list)
+    car_images: List[Path] = field(default_factory=list)
+    inspector_images: List[Path] = field(default_factory=list)
+
+    def summary(self) -> str:
+        return (
+            f"{self.frames_processed} frames, {self.motion_events} motion event(s), "
+            f"{self.cars_detected} car(s), {self.inspectors_flagged} inspector(s)"
+        )
+
+
+def default_action_hook(alert: InspectorAlert) -> None:
+    """Placeholder for what should happen when an inspector is detected.
+
+    This is the single extension point for the "further actions" that are not
+    decided yet - e.g. send a notification, start recording, sound an alarm,
+    upload the image, log to a database, ...
+    """
+    logger.warning(
+        "TODO: parking inspector detected - no action configured yet "
+        "(see default_action_hook in pipeline.py). Image: %s",
+        alert.inspector_image_path,
+    )
+
+
+class _ClipRecorder:
+    """Streams frames to a video file, trying mp4 first and falling back to avi.
+
+    Writing incrementally keeps memory flat: only the pre-roll ring buffer and
+    one best frame are ever held, no matter how long the event runs.
+    """
+
+    def __init__(self, directory: Path, stem: str, fps: float, size: Tuple[int, int]) -> None:
+        self._writer: Optional[cv2.VideoWriter] = None
+        self.path: Optional[Path] = None
+        for extension, code in ((".mp4", "mp4v"), (".avi", "MJPG")):
+            candidate = directory / f"{stem}{extension}"
+            writer = cv2.VideoWriter(str(candidate), make_fourcc(code), fps, size)
+            if writer.isOpened():
+                self._writer = writer
+                self.path = candidate
+                break
+            writer.release()
+
+    @property
+    def ok(self) -> bool:
+        return self._writer is not None
+
+    def write(self, frame: np.ndarray) -> None:
+        if self._writer is not None:
+            self._writer.write(frame)
+
+    def close(self) -> Optional[Path]:
+        if self._writer is None:
+            return None
+        self._writer.release()
+        self._writer = None
+        if self.path is not None and self.path.exists() and self.path.stat().st_size > 0:
+            return self.path
+        return None
+
+
+class Pipeline:
+    def __init__(
+        self,
+        config: AppConfig,
+        car_detector: Optional[CarDetector],
+        inspector_classifier: Optional[InspectorClassifier],
+        *,
+        action_hook: Optional[ActionHook] = None,
+        log: Optional[logging.Logger] = None,
+    ) -> None:
+        self.config = config
+        self.car_detector = car_detector
+        self.inspector = inspector_classifier
+        self.action_hook: ActionHook = action_hook or default_action_hook
+        self.logger = log or logger
+
+        self.output_dir = config.output_dir
+        self.clips_dir = self.output_dir / "clips"
+        self.cars_dir = self.output_dir / "cars"
+        self.inspectors_dir = self.output_dir / "inspectors"
+
+        self.proc_width = config.processing.width
+        self.full_res_crops = config.processing.full_res_crops
+
+        self.fps = 25.0
+        self._stop = False
+        self._proc_size: Tuple[int, int] = (0, 0)
+        self._run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.motion: Optional[MotionDetector] = None
+
+    # -- public API --------------------------------------------------------- #
+    def run(self, source: FrameSource, *, preview: bool = False) -> RunStats:
+        self._prepare_dirs()
+        self.fps = source.fps or 25.0
+        self._proc_size = self._processing_size(source.size)
+        self.motion = MotionDetector(self.config.motion, self._proc_size)
+
+        motion_cfg = self.config.motion
+        pre_frames = max(1, int(round(motion_cfg.pre_seconds * self.fps)))
+        post_frames = max(1, int(round(motion_cfg.post_seconds * self.fps)))
+        trigger_frames = motion_cfg.trigger_frames
+
+        self.logger.info(
+            "pipeline: source %dx%d -> processing %dx%d, fps=%.2f, "
+            "sensitivity=%.2f, full_res_crops=%s",
+            source.size[0], source.size[1], self._proc_size[0], self._proc_size[1],
+            self.fps, motion_cfg.sensitivity, self.full_res_crops,
+        )
+        self.logger.info("motion area: %s", motion_cfg.area)
+
+        ring: deque = deque(maxlen=pre_frames)
+        recorder: Optional[_ClipRecorder] = None
+        capturing = False
+        last_motion_index: Optional[int] = None
+        consecutive = 0
+        best: Optional[tuple] = None  # (area, proc_frame, full_frame, union_box)
+        event_index = 0
+        stats = RunStats()
+        preview_ok = bool(preview)
+
+        for index, frame in source.frames():
+            stats.frames_processed += 1
+            proc = self._to_processing_size(frame)
+            result = self.motion.detect(proc)
+
+            if not capturing:
+                ring.append(proc.copy())
+                consecutive = consecutive + 1 if result.motion else 0
+                if result.motion and consecutive >= trigger_frames:
+                    capturing = True
+                    recorder = _ClipRecorder(self.clips_dir, self._stem(event_index), self.fps, self._proc_size)
+                    if not recorder.ok:
+                        self.logger.error("no usable video codec - clips will be skipped")
+                    for buffered in ring:
+                        recorder.write(buffered)
+                    last_motion_index = index
+                    best = self._consider(best, proc, frame, result)
+            else:
+                recorder.write(proc)
+                if result.motion:
+                    last_motion_index = index
+                    best = self._consider(best, proc, frame, result)
+                if last_motion_index is not None and index - last_motion_index >= post_frames:
+                    self._finish_event(recorder, best, event_index, stats)
+                    event_index += 1
+                    capturing = False
+                    recorder = None
+                    consecutive = 0
+                    best = None
+                    last_motion_index = None
+                    ring.clear()
+
+            if preview_ok:
+                preview_ok = self._show_preview(proc, result)
+            if self._stop:
+                break
+
+        if capturing and recorder is not None:
+            self._finish_event(recorder, best, event_index, stats)
+
+        self._close_preview()
+        return stats
+
+    # -- internals ---------------------------------------------------------- #
+    def _prepare_dirs(self) -> None:
+        # Only create the folders for the stages that are actually enabled.
+        self.clips_dir.mkdir(parents=True, exist_ok=True)
+        if self.car_detector is not None:
+            self.cars_dir.mkdir(parents=True, exist_ok=True)
+        if self.inspector is not None and self.car_detector is not None:
+            self.inspectors_dir.mkdir(parents=True, exist_ok=True)
+
+    def _stem(self, event_index: int) -> str:
+        return f"{self._run_stamp}_event{event_index:03d}"
+
+    def _processing_size(self, size: Tuple[int, int]) -> Tuple[int, int]:
+        width, height = size
+        if self.proc_width is None or width <= self.proc_width:
+            return (width, height)
+        scale = self.proc_width / width
+        return (self.proc_width, max(1, int(round(height * scale))))
+
+    def _to_processing_size(self, frame: np.ndarray) -> np.ndarray:
+        if self.proc_width is None:
+            return frame
+        height, width = frame.shape[:2]
+        if width <= self.proc_width:
+            return frame
+        return cv2.resize(frame, self._proc_size, interpolation=cv2.INTER_AREA)
+
+    @staticmethod
+    def _consider(best, proc: np.ndarray, full: np.ndarray, result: MotionResult):
+        box = result.union_box
+        if box is None:
+            return best
+        if best is None or result.area_pixels > best[0]:
+            return (result.area_pixels, proc.copy(), full.copy(), box)
+        return best
+
+    @staticmethod
+    def _scale_box(box: BBox, from_shape: Tuple[int, int], to_shape: Tuple[int, int]) -> BBox:
+        from_h, from_w = from_shape[:2]
+        to_h, to_w = to_shape[:2]
+        if (from_w, from_h) == (to_w, to_h):
+            return box
+        sx, sy = to_w / from_w, to_h / from_h
+        x, y, w, h = box
+        return (
+            int(round(x * sx)), int(round(y * sy)),
+            int(round(w * sx)), int(round(h * sy)),
+        )
+
+    def _finish_event(self, recorder: Optional[_ClipRecorder], best, event_index: int, stats: RunStats) -> None:
+        stats.motion_events += 1
+        stem = self._stem(event_index)
+
+        clip_path = recorder.close() if recorder is not None else None
+        if clip_path is not None:
+            stats.clips.append(clip_path)
+            self.logger.info("motion event %d -> %s", event_index, clip_path.name)
+        elif recorder is not None and not recorder.ok:
+            self.logger.info("motion event %d (clip skipped: no usable codec)", event_index)
+
+        if best is None or self.car_detector is None:
+            return
+
+        _, proc, full, box_proc = best
+        detections = self.car_detector.detect(proc, region=box_proc)
+        if not detections:
+            self.logger.info("  no car detected in %s", stem)
+            return
+
+        # Detect on the (small) processing frame, crop from full resolution.
+        crop_source = full if self.full_res_crops else proc
+        for car_index, detection in enumerate(detections):
+            box = self._scale_box(detection.bbox, proc.shape[:2], crop_source.shape[:2])
+            self._handle_car(crop_source, replace(detection, bbox=box), car_index, stem, clip_path, stats)
+
+    def _handle_car(
+        self,
+        source_frame: np.ndarray,
+        detection: Detection,
+        car_index: int,
+        stem: str,
+        clip_path: Optional[Path],
+        stats: RunStats,
+    ) -> None:
+        stats.cars_detected += 1
+        crop = crop_bbox(source_frame, detection.bbox, pad=CAR_CROP_PAD)
+        car_path = self.cars_dir / f"{stem}_car{car_index}.jpg"
+        cv2.imwrite(str(car_path), crop)
+        stats.car_images.append(car_path)
+        self.logger.info(
+            "  car %d (%s %.2f) bbox=%s -> %s",
+            car_index, detection.label, detection.confidence, detection.bbox, car_path.name,
+        )
+
+        if self.inspector is None:
+            return
+
+        classification = self.inspector.classify(crop)
+        if not self.inspector.is_inspector(classification):
+            return
+
+        stats.inspectors_flagged += 1
+        inspector_path = self.inspectors_dir / f"{stem}_car{car_index}_inspector.jpg"
+        cv2.imwrite(str(inspector_path), crop)
+        stats.inspector_images.append(inspector_path)
+        self.logger.warning(
+            "  INSPECTOR flagged (%s %.2f) -> %s",
+            classification.label, classification.confidence, inspector_path.name,
+        )
+
+        alert = InspectorAlert(
+            timestamp=datetime.now().isoformat(timespec="seconds"),
+            clip_path=clip_path or Path(),
+            car_image_path=car_path,
+            inspector_image_path=inspector_path,
+            car_detection=detection,
+            classification=classification,
+        )
+        self._run_action(alert)
+
+    def _run_action(self, alert: InspectorAlert) -> None:
+        try:
+            self.action_hook(alert)
+        except Exception:  # noqa: BLE001 - an action must never kill the run
+            self.logger.exception("action hook failed for %s", alert.inspector_image_path)
+
+    def _show_preview(self, frame: np.ndarray, result: MotionResult) -> bool:
+        canvas = frame.copy()
+        if self.motion is not None:
+            x0, y0, x1, y1 = self.config.motion.area.to_pixels(self.motion.width, self.motion.height)
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), (255, 200, 0), 1)
+        for x, y, w, h in result.boxes:
+            cv2.rectangle(canvas, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        try:
+            cv2.imshow("duckeasypark", canvas)
+            if cv2.waitKey(1) & 0xFF in (27, ord("q")):
+                self._stop = True
+                return False
+        except cv2.error as exc:
+            self.logger.warning("preview disabled (no GUI available): %s", exc)
+            return False
+        return True
+
+    def _close_preview(self) -> None:
+        try:
+            cv2.destroyAllWindows()
+        except cv2.error:  # pragma: no cover - headless
+            pass
