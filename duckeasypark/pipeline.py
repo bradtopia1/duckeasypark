@@ -7,12 +7,17 @@ mocks used today can be swapped for real models via config.
 
 Speed/memory notes
 ------------------
-Frames are downscaled to ``processing.width`` before motion detection, and the
-saved clips use that same downscaled size (a big win on a Pi 3B). The car crop
-can still be taken from the original full-resolution frame via
+Each stage runs at its own resolution (``processing.motion_width`` /
+``detect_width`` / ``clip_width``; ``None`` means the source resolution). Motion
+detection usually runs smallest because it only needs to trigger a clip; the car
+detector can run larger so distant cars keep enough pixels; and clips are worth
+keeping at full resolution when they double as training data. The car crop can
+still be taken from the original full-resolution frame via
 ``processing.full_res_crops``. Clips are streamed to disk as an event unfolds,
 so memory stays bounded regardless of how long an event lasts - only the
-pre-roll ring buffer and a single "best" frame are held.
+pre-roll ring buffer and a single "best" frame are held. Note the ring buffer
+holds frames at the *clip* resolution, so full-res clips mean a much larger
+buffer.
 """
 
 from __future__ import annotations
@@ -143,12 +148,16 @@ class Pipeline:
         self.cars_dir = self.output_dir / "cars"
         self.inspectors_dir = self.output_dir / "inspectors"
 
-        self.proc_width = config.processing.width
+        self.motion_width = config.processing.motion_width
+        self.detect_width = config.processing.detect_width
+        self.clip_width = config.processing.clip_width
         self.full_res_crops = config.processing.full_res_crops
 
         self.fps = 25.0
         self._stop = False
-        self._proc_size: Tuple[int, int] = (0, 0)
+        self._motion_size: Tuple[int, int] = (0, 0)
+        self._detect_size: Tuple[int, int] = (0, 0)
+        self._clip_size: Tuple[int, int] = (0, 0)
         self._run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.motion: Optional[MotionDetector] = None
 
@@ -156,8 +165,10 @@ class Pipeline:
     def run(self, source: FrameSource, *, preview: bool = False) -> RunStats:
         self._prepare_dirs()
         self.fps = source.fps or 25.0
-        self._proc_size = self._processing_size(source.size)
-        self.motion = MotionDetector(self.config.motion, self._proc_size)
+        self._motion_size = self._scaled_size(source.size, self.motion_width)
+        self._detect_size = self._scaled_size(source.size, self.detect_width)
+        self._clip_size = self._scaled_size(source.size, self.clip_width)
+        self.motion = MotionDetector(self.config.motion, self._motion_size)
 
         motion_cfg = self.config.motion
         pre_frames = max(1, int(round(motion_cfg.pre_seconds * self.fps)))
@@ -165,9 +176,12 @@ class Pipeline:
         trigger_frames = motion_cfg.trigger_frames
 
         self.logger.info(
-            "pipeline: source %dx%d -> processing %dx%d, fps=%.2f, "
-            "sensitivity=%.2f, full_res_crops=%s",
-            source.size[0], source.size[1], self._proc_size[0], self._proc_size[1],
+            "pipeline: source %dx%d -> motion %dx%d, detect %dx%d, clip %dx%d, "
+            "fps=%.2f, sensitivity=%.2f, full_res_crops=%s",
+            source.size[0], source.size[1],
+            self._motion_size[0], self._motion_size[1],
+            self._detect_size[0], self._detect_size[1],
+            self._clip_size[0], self._clip_size[1],
             self.fps, motion_cfg.sensitivity, self.full_res_crops,
         )
         self.logger.info("motion area: %s", motion_cfg.area)
@@ -184,26 +198,27 @@ class Pipeline:
 
         for index, frame in source.frames():
             stats.frames_processed += 1
-            proc = self._to_processing_size(frame)
-            result = self.motion.detect(proc)
+            motion_frame = self._to_size(frame, self._motion_size)
+            result = self.motion.detect(motion_frame)
+            clip_frame = self._to_size(frame, self._clip_size)
 
             if not capturing:
-                ring.append(proc.copy())
+                ring.append(clip_frame.copy())
                 consecutive = consecutive + 1 if result.motion else 0
                 if result.motion and consecutive >= trigger_frames:
                     capturing = True
-                    recorder = _ClipRecorder(self.clips_dir, self._stem(event_index), self.fps, self._proc_size)
+                    recorder = _ClipRecorder(self.clips_dir, self._stem(event_index), self.fps, self._clip_size)
                     if not recorder.ok:
                         self.logger.error("no usable video codec - clips will be skipped")
                     for buffered in ring:
                         recorder.write(buffered)
                     last_motion_index = index
-                    best = self._consider(best, proc, frame, result)
+                    best = self._consider(best, frame, motion_frame, result)
             else:
-                recorder.write(proc)
+                recorder.write(clip_frame)
                 if result.motion:
                     last_motion_index = index
-                    best = self._consider(best, proc, frame, result)
+                    best = self._consider(best, frame, motion_frame, result)
                 if last_motion_index is not None and index - last_motion_index >= post_frames:
                     self._finish_event(recorder, best, event_index, stats)
                     event_index += 1
@@ -215,7 +230,7 @@ class Pipeline:
                     ring.clear()
 
             if preview_ok:
-                preview_ok = self._show_preview(proc, result)
+                preview_ok = self._show_preview(motion_frame, result)
             if self._stop:
                 break
 
@@ -237,29 +252,38 @@ class Pipeline:
     def _stem(self, event_index: int) -> str:
         return f"{self._run_stamp}_event{event_index:03d}"
 
-    def _processing_size(self, size: Tuple[int, int]) -> Tuple[int, int]:
-        width, height = size
-        if self.proc_width is None or width <= self.proc_width:
-            return (width, height)
-        scale = self.proc_width / width
-        return (self.proc_width, max(1, int(round(height * scale))))
+    @staticmethod
+    def _scaled_size(size: Tuple[int, int], width: Optional[int]) -> Tuple[int, int]:
+        """Downscale ``size`` to ``width``, keeping the aspect ratio.
 
-    def _to_processing_size(self, frame: np.ndarray) -> np.ndarray:
-        if self.proc_width is None:
-            return frame
-        height, width = frame.shape[:2]
-        if width <= self.proc_width:
-            return frame
-        return cv2.resize(frame, self._proc_size, interpolation=cv2.INTER_AREA)
+        ``width`` of ``None`` (or one that is not smaller) keeps the source size.
+        """
+        w, h = size
+        if width is None or w <= width:
+            return (w, h)
+        scale = width / w
+        return (width, max(1, int(round(h * scale))))
 
     @staticmethod
-    def _consider(best, proc: np.ndarray, full: np.ndarray, result: MotionResult):
+    def _to_size(frame: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
+        """Return ``frame`` resized to ``size``, or the frame itself if it fits."""
+        h, w = frame.shape[:2]
+        if (w, h) == size:
+            return frame
+        return cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
+
+    def _consider(self, best, full: np.ndarray, motion: np.ndarray, result: MotionResult):
         box = result.union_box
         if box is None:
             return best
-        if best is None or result.area_pixels > best[0]:
-            return (result.area_pixels, proc.copy(), full.copy(), box)
-        return best
+        if best is not None and result.area_pixels <= best[0]:
+            return best
+        if self._detect_size == self._motion_size:
+            detect = motion
+        else:
+            detect = self._to_size(full, self._detect_size)
+        box_detect = self._scale_box(box, motion.shape[:2], detect.shape[:2])
+        return (result.area_pixels, detect, full.copy(), box_detect)
 
     @staticmethod
     def _scale_box(box: BBox, from_shape: Tuple[int, int], to_shape: Tuple[int, int]) -> BBox:
@@ -288,16 +312,16 @@ class Pipeline:
         if best is None or self.car_detector is None:
             return
 
-        _, proc, full, box_proc = best
-        detections = self.car_detector.detect(proc, region=box_proc)
+        _, detect, full, box_detect = best
+        detections = self.car_detector.detect(detect, region=box_detect)
         if not detections:
             self.logger.info("  no car detected in %s", stem)
             return
 
-        # Detect on the (small) processing frame, crop from full resolution.
-        crop_source = full if self.full_res_crops else proc
+        # Detect on the (smaller) detection frame, crop from full resolution.
+        crop_source = full if self.full_res_crops else detect
         for car_index, detection in enumerate(detections):
-            box = self._scale_box(detection.bbox, proc.shape[:2], crop_source.shape[:2])
+            box = self._scale_box(detection.bbox, detect.shape[:2], crop_source.shape[:2])
             self._handle_car(crop_source, replace(detection, bbox=box), car_index, stem, clip_path, stats)
 
     def _handle_car(

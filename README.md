@@ -97,19 +97,35 @@ Other useful knobs: `motion.min_area_percent`, `motion.trigger_frames`,
 
 ### Processing resolution
 
-The biggest speed/memory knob is `processing.width` — frames are downscaled to
-that width before motion detection, and clips are saved at the same size:
+Each stage runs at its own resolution, set by three independent knobs (`null`
+means "keep the source resolution"). They are separate because the stages want
+different things:
+
+| key | controls | sensible value |
+|-----|----------|----------------|
+| `processing.motion_width` | resolution of motion detection | small — `640`, or `320`–`480` if CPU-bound |
+| `processing.detect_width` | resolution the car detector sees | as large as the model allows — `640`–`1280` |
+| `processing.clip_width` | resolution clips are written at | `null` (full res) when clips are training data |
+
+Motion detection only needs to be a coarse trigger, so it runs smallest: lower is
+much faster (roughly with the square of the reduction) and uses less RAM, and too
+low only matters if small/distant movement gets missed. The car detector is the
+opposite — small/distant cars need pixels — so it can run larger. And clips are
+worth keeping at full resolution whenever they double as training data, because
+you can always downscale later but never upscale.
 
 ```yaml
 processing:
-  width: 640            # null = keep the source resolution
+  motion_width: 640     # cheap trigger
+  detect_width: 640     # car-detector input
+  clip_width: null      # null = save clips at the source resolution
   full_res_crops: true  # crop cars from the original full-res frame
 ```
 
-Cost scales roughly with the pixel count, so 1080p → 640 is ~9x fewer pixels.
-On a 1080p30 source (measured, motion-only, one core):
+Cost scales roughly with the pixel count, so 1080p → 640 is ~9x fewer pixels. On
+a 1080p30 source (measured, motion-only, one core):
 
-| `width` | throughput | vs real-time | peak RAM |
+| `motion_width` | throughput | vs real-time | peak RAM |
 |---------|-----------|--------------|----------|
 | `null` (1920) | ~31 fps | ~1x | ~640 MB |
 | `640` | ~64 fps | ~2x | ~270 MB |
@@ -117,8 +133,13 @@ On a 1080p30 source (measured, motion-only, one core):
 
 `full_res_crops: true` keeps car crops sharp for the inspector model even though
 detection runs small. A Pi 3B is roughly an order of magnitude slower than the
-desktop these numbers came from, so lower `width` (and a lower camera capture
-resolution) matters a lot there.
+desktop these numbers came from, so lower `motion_width` (and a lower camera
+capture resolution) matters a lot there.
+
+> **Full-res clips cost RAM.** The pre-roll buffer holds frames at the clip
+> resolution, so `clip_width: null` buffers full-resolution frames (~6 MB each at
+> 1080p, versus ~0.7 MB at 640) — a real concern on a 1 GB Pi. Lower
+> `motion.clip.pre_seconds` if you need to.
 
 ### Does it run in real time?
 
@@ -127,7 +148,7 @@ processes as fast as the CPU allows — which for a big clip can be *slower* tha
 the video's own runtime. Set `realtime: true` to pace playback to the source FPS
 (useful to simulate a live feed). The main speed levers, in order of impact:
 
-1. `processing.width` (above) — the big one.
+1. `processing.motion_width` (above) — the big one.
 2. `modes.test.max_seconds` — only process the first N seconds.
 3. `motion.area` — a smaller region of interest means less work per frame.
 4. `motion.clip.pre_seconds` / `post_seconds` — shorter clips encode faster.
@@ -202,11 +223,73 @@ class; the label named `inspector` is what counts as a positive hit.
 - **A live camera mode** — implement `CameraSource` in `duckeasypark/video.py`
   (with `picamera2` on the Pi) and add a runner in `duckeasypark/modes/`.
 
+## Deploy on a Raspberry Pi (headless, starts at boot)
+
+On Raspberry Pi OS the way to add something to "startup items" without a desktop
+login is a **systemd service**. A ready-made unit lives in
+[`deploy/duckeasypark.service`](deploy/duckeasypark.service); it runs
+`main.py` with the venv interpreter, restarts the program if it ever exits, and
+sends all output to the system journal.
+
+> **Not a live watcher yet.** Only `test` mode exists, and it processes a video
+> file to completion and exits — so today the service just replays
+> `modes.test.video_path` and systemd restarts it every few seconds. It becomes
+> a real always-on camera watcher once a live mode is implemented (see the
+> Roadmap); the unit itself won't need to change.
+
+### 1. Put the code and a fresh venv on the Pi
+
+```bash
+# on the Pi
+git clone <your-repo-url> ~/duckeasypark   # or copy the folder across
+cd ~/duckeasypark
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+Do **not** copy your desktop `.venv/` across: it is built for x86_64 and its
+compiled extensions won't import on the Pi's ARM CPU. Build a new one on the Pi,
+as above. On Raspberry Pi OS install the venv support first if it's missing:
+`sudo apt install -y python3-venv`.
+
+### 2. Edit the config and the unit
+
+- In `config.yaml`: set `mode:` to the mode you want the service to run, and
+  point `modes.test.video_path` at a file that exists on the Pi (or generate one
+  with `scripts/make_sample_video.py`).
+- In `deploy/duckeasypark.service`: change `User=` and the two `/home/pi/...`
+  paths if your username or install location differs. `WorkingDirectory` must be
+  the project folder, because the relative `-c config.yaml` resolves against it.
+
+### 3. Install, enable, and start it
+
+```bash
+cd ~/duckeasypark
+sudo cp deploy/duckeasypark.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now duckeasypark
+```
+
+`enable` is what makes it start on every boot; `--now` also starts it right away.
+
+### 4. Check on it
+
+```bash
+systemctl status duckeasypark          # is it running?
+journalctl -u duckeasypark -f          # follow the logs (Ctrl-C to stop watching)
+sudo systemctl stop duckeasypark       # stop it now
+sudo systemctl disable duckeasypark    # stop starting it at boot
+```
+
+After editing the unit file, re-run `sudo systemctl daemon-reload` for the
+change to take effect.
+
 ## Project layout
 
 ```
 main.py                       CLI entry point
 config.yaml                   configuration
+deploy/duckeasypark.service   systemd unit for autostart on a Pi
 scripts/make_sample_video.py  synthetic test-clip generator
 duckeasypark/
   config.py                   typed config loading/validation

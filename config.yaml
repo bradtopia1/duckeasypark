@@ -36,18 +36,30 @@ motion:
     post_seconds: 1.5
 
 # --------------------------------------------------------------------------- #
-# Processing resolution. The single biggest speed/memory knob.
+# Per-stage resolution. Each stage runs at its own size; `null` means "keep the
+# source resolution". They are separate because the stages want different things
+# - this is the single biggest speed/memory knob.
 # --------------------------------------------------------------------------- #
 processing:
-  # Downscale frames to this width before motion detection, and save clips at
-  # the same size. null = keep the source resolution.
+  # Motion detection only needs to be a coarse trigger, so it runs smallest.
   # Lower is much faster (roughly with the square of the reduction) and uses
   # less RAM; too low and small/distant movement gets missed. 640 is a good
   # starting point for a 1080p camera.
-  width: 640
+  motion_width: 640
+
+  # Resolution the car detector sees. Larger keeps more pixels for small/distant
+  # cars but costs speed; a real detector is not wired up yet, so this only
+  # matters once you enable one. null = keep the source resolution.
+  detect_width: 640
+
+  # Resolution clips are written at. null = full source resolution, which is
+  # what you want when the clips are training data (you can always downscale,
+  # never upscale). Note the pre-roll buffer holds frames at THIS size, so
+  # full-res clips use a lot more RAM - lower motion.clip.pre_seconds if needed.
+  clip_width: null
+
   # Take the car crop from the ORIGINAL full-resolution frame (sharper crops
-  # for the inspector model) instead of the downscaled one. Ignored if width
-  # is null.
+  # for the inspector model) instead of the detection frame.
   full_res_crops: true
 
 # --------------------------------------------------------------------------- #
@@ -87,7 +99,7 @@ modes:
     # Your video file, used instead of a live camera (relative to this file).
     # Point this at your own recording. No video yet? Generate a synthetic clip
     # for testing with: python scripts/make_sample_video.py
-    video_path: samples/test.mp4
+    video_path: samples/clip_004.mp4
     loop: false                   # restart from the start when the file ends
     realtime: false               # sleep to play back at the file's native FPS
     show_preview: false           # needs a GUI build of OpenCV (see README.md)

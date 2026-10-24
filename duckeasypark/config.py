@@ -43,6 +43,13 @@ def _as_bool(value: Any, ctx: str) -> bool:
     return value
 
 
+def _opt_width(value: Any, ctx: str) -> Optional[int]:
+    """Parse an optional target width; ``None`` means 'keep the source size'."""
+    if value is None:
+        return None
+    return max(1, _as_int(value, ctx))
+
+
 def _section(data: Dict[str, Any], key: str) -> Dict[str, Any]:
     value = data.get(key, {})
     if value is None:
@@ -150,9 +157,17 @@ class TestModeConfig:
 
 @dataclass(frozen=True)
 class ProcessingConfig:
-    """Controls the resolution frames are processed at, for speed/memory."""
+    """Per-stage resolution, for speed/memory.
 
-    width: Optional[int] = None
+    Each stage runs at its own size because they want different things: motion
+    detection only needs a coarse trigger, the car detector wants more detail,
+    and clips are worth keeping at full resolution as training data. ``None``
+    means "keep the source resolution" for that stage.
+    """
+
+    motion_width: Optional[int] = None
+    detect_width: Optional[int] = None
+    clip_width: Optional[int] = None
     full_res_crops: bool = True
 
 
@@ -252,9 +267,13 @@ def load_config(path: str | Path) -> AppConfig:
 
     # -- processing --------------------------------------------------------- #
     proc = _section(raw, "processing")
-    width_raw = proc.get("width", None)
+    # ``width`` is the pre-split single knob. Keep honouring it as the default
+    # for the motion and detection stages so existing configs still work.
+    legacy_width = proc.get("width", None)
     processing = ProcessingConfig(
-        width=None if width_raw is None else max(1, _as_int(width_raw, "processing.width")),
+        motion_width=_opt_width(proc.get("motion_width", legacy_width), "processing.motion_width"),
+        detect_width=_opt_width(proc.get("detect_width", legacy_width), "processing.detect_width"),
+        clip_width=_opt_width(proc.get("clip_width", None), "processing.clip_width"),
         full_res_crops=_as_bool(proc.get("full_res_crops", True), "processing.full_res_crops"),
     )
 
