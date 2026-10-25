@@ -92,7 +92,9 @@ being missed.
 
 Together with the per-event lines and the `done: ...` summary at exit, that is
 the whole picture of a run; on the Pi it all goes to the journal
-(`journalctl -u carpi -f`).
+(`journalctl -u carpi -f`). The same lines are also written to a log file,
+`carpi.log`, in the folder you run from (rotated at ~1 MB, keeping 3 backups, so
+an always-on rig won't fill the disk).
 
 ## Configuration
 

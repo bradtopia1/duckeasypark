@@ -10,10 +10,15 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from typing import Optional, Sequence
 
 from carpi.config import ConfigError, load_config
 from carpi.modes import get_mode_runner
+
+# Log file, written next to wherever the program is run from (on the Pi that is
+# the project folder). Rotated so a 24/7 rig cannot fill the disk.
+LOG_FILE = "carpi.log"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,10 +53,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
 
     level = max(logging.DEBUG, logging.WARNING - 10 * args.verbose)
+    # Log to the terminal/journal as usual, and to a rotating file so there is a
+    # lasting record on the rig.
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
+        handlers=[
+            logging.StreamHandler(),
+            RotatingFileHandler(
+                LOG_FILE, maxBytes=1_000_000, backupCount=3, encoding="utf-8",
+            ),
+        ],
     )
 
     try:
