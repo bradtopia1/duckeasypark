@@ -1,4 +1,4 @@
-# duckeasypark
+# carpi
 
 An in-car camera rig (target: Raspberry Pi 3B + camera) that watches for cars
 driving past, crops them out of the frame, and decides whether the car belongs to
@@ -80,7 +80,7 @@ tell a headless rig is still moving and keeping up (interval:
 `logging.status_interval_seconds`, default 30s; `0` disables it):
 
 ```
-12:00:14 INFO    duckeasypark.pipeline: status: 1800 frames in 30.1s | now 59.8 fps, avg 59.8 fps | source 30.00 fps -> 2.0x, keeping up | 3 motion event(s), 1 car(s), 0 inspector(s)
+12:00:14 INFO    carpi.pipeline: status: 1800 frames in 30.1s | now 59.8 fps, avg 59.8 fps | source 30.00 fps -> 2.0x, keeping up | 3 motion event(s), 1 car(s), 0 inspector(s)
 ```
 
 `now` is the rate over the last interval and `avg` the whole run so far; the
@@ -92,7 +92,7 @@ being missed.
 
 Together with the per-event lines and the `done: ...` summary at exit, that is
 the whole picture of a run; on the Pi it all goes to the journal
-(`journalctl -u duckeasypark -f`).
+(`journalctl -u carpi -f`).
 
 ## Configuration
 
@@ -238,17 +238,17 @@ class; the label named `inspector` is what counts as a positive hit.
 ## Where to extend
 
 - **The action** when an inspector is found — `default_action_hook()` in
-  `duckeasypark/pipeline.py` (notification, recording, alarm, upload, ...).
-- **A real car detector** — add a class in `duckeasypark/detectors/` implementing
+  `carpi/pipeline.py` (notification, recording, alarm, upload, ...).
+- **A real car detector** — add a class in `carpi/detectors/` implementing
   `CarDetector.detect()` and register it in `detectors/__init__.py`.
-- **A live camera mode** — implement `CameraSource` in `duckeasypark/video.py`
-  (with `picamera2` on the Pi) and add a runner in `duckeasypark/modes/`.
+- **A live camera mode** — implement `CameraSource` in `carpi/video.py`
+  (with `picamera2` on the Pi) and add a runner in `carpi/modes/`.
 
 ## Deploy on a Raspberry Pi (headless, starts at boot)
 
 On Raspberry Pi OS the way to add something to "startup items" without a desktop
 login is a **systemd service**. A ready-made unit lives in
-[`deploy/duckeasypark.service`](deploy/duckeasypark.service); it runs
+[`deploy/carpi.service`](deploy/carpi.service); it runs
 `main.py` with the venv interpreter, restarts the program if it ever exits, and
 sends all output to the system journal.
 
@@ -262,8 +262,8 @@ sends all output to the system journal.
 
 ```bash
 # on the Pi
-git clone <your-repo-url> ~/duckeasypark   # or copy the folder across
-cd ~/duckeasypark
+git clone <your-repo-url> ~/carpi   # or copy the folder across
+cd ~/carpi
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
@@ -278,17 +278,17 @@ as above. On Raspberry Pi OS install the venv support first if it's missing:
 - In `config.yaml`: set `mode:` to the mode you want the service to run, and
   point `modes.test.video_path` at a file that exists on the Pi (or generate one
   with `scripts/make_sample_video.py`).
-- In `deploy/duckeasypark.service`: change `User=` and the two `/home/pi/...`
+- In `deploy/carpi.service`: change `User=` and the two `/home/pi/...`
   paths if your username or install location differs. `WorkingDirectory` must be
   the project folder, because the relative `-c config.yaml` resolves against it.
 
 ### 3. Install, enable, and start it
 
 ```bash
-cd ~/duckeasypark
-sudo cp deploy/duckeasypark.service /etc/systemd/system/
+cd ~/carpi
+sudo cp deploy/carpi.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now duckeasypark
+sudo systemctl enable --now carpi
 ```
 
 `enable` is what makes it start on every boot; `--now` also starts it right away.
@@ -296,10 +296,10 @@ sudo systemctl enable --now duckeasypark
 ### 4. Check on it
 
 ```bash
-systemctl status duckeasypark          # is it running?
-journalctl -u duckeasypark -f          # follow the logs (Ctrl-C to stop watching)
-sudo systemctl stop duckeasypark       # stop it now
-sudo systemctl disable duckeasypark    # stop starting it at boot
+systemctl status carpi          # is it running?
+journalctl -u carpi -f          # follow the logs (Ctrl-C to stop watching)
+sudo systemctl stop carpi       # stop it now
+sudo systemctl disable carpi    # stop starting it at boot
 ```
 
 After editing the unit file, re-run `sudo systemctl daemon-reload` for the
@@ -310,9 +310,9 @@ change to take effect.
 ```
 main.py                       CLI entry point
 config.yaml                   configuration
-deploy/duckeasypark.service   systemd unit for autostart on a Pi
+deploy/carpi.service          systemd unit for autostart on a Pi
 scripts/make_sample_video.py  synthetic test-clip generator
-duckeasypark/
+carpi/
   config.py                   typed config loading/validation
   video.py                    FrameSource: FileSource (test) + CameraSource stub
   motion.py                   MOG2 motion detection + ROI + sensitivity

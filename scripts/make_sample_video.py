@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a synthetic test clip for duckeasypark's test mode.
+"""Generate a synthetic test clip for carpi's test mode.
 
 Draws a couple of "cars" (coloured rectangles) crossing a textured background so
 the motion -> car -> inspector pipeline has something to chew on without needing

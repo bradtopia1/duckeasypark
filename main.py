@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""duckeasypark - entry point.
+"""carpi - entry point.
 
 Reads a YAML config, picks a mode, and runs the motion -> car -> inspector
 pipeline. See README.md and config.yaml for details.
@@ -12,13 +12,13 @@ import logging
 import sys
 from typing import Optional, Sequence
 
-from duckeasypark.config import ConfigError, load_config
-from duckeasypark.modes import get_mode_runner
+from carpi.config import ConfigError, load_config
+from carpi.modes import get_mode_runner
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="duckeasypark",
+        prog="carpi",
         description="Detect cars (and parking inspectors) from a camera or video file.",
     )
     parser.add_argument(

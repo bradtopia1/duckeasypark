@@ -18,7 +18,7 @@ from ..detectors import build_car_detector
 from ..pipeline import ActionHook, Pipeline, RunStats
 from ..video import FileSource
 
-logger = logging.getLogger("duckeasypark.modes.test")
+logger = logging.getLogger("carpi.modes.test")
 
 
 def run_test_mode(

@@ -1,8 +1,8 @@
 """The detection pipeline: motion -> clip -> car -> crop -> inspector -> action.
 
 The pipeline is deliberately backend-agnostic: it only talks to the
-:class:`~duckeasypark.detectors.base.CarDetector` and
-:class:`~duckeasypark.classifiers.base.InspectorClassifier` interfaces, so the
+:class:`~carpi.detectors.base.CarDetector` and
+:class:`~carpi.classifiers.base.InspectorClassifier` interfaces, so the
 mocks used today can be swapped for real models via config.
 
 Speed/memory notes
@@ -40,7 +40,7 @@ from .detectors.base import CarDetector, Detection
 from .motion import BBox, MotionDetector, MotionResult
 from .video import FrameSource, make_fourcc
 
-logger = logging.getLogger("duckeasypark.pipeline")
+logger = logging.getLogger("carpi.pipeline")
 
 CAR_CROP_PAD = 0.05
 
@@ -440,7 +440,7 @@ class Pipeline:
         for x, y, w, h in result.boxes:
             cv2.rectangle(canvas, (x, y), (x + w, y + h), (0, 255, 0), 2)
         try:
-            cv2.imshow("duckeasypark", canvas)
+            cv2.imshow("carpi", canvas)
             if cv2.waitKey(1) & 0xFF in (27, ord("q")):
                 self._stop = True
                 return False
