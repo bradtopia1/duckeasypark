@@ -23,6 +23,7 @@ buffer.
 from __future__ import annotations
 
 import logging
+import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -100,8 +101,11 @@ class _ClipRecorder:
     def __init__(self, directory: Path, stem: str, fps: float, size: Tuple[int, int]) -> None:
         self._writer: Optional[cv2.VideoWriter] = None
         self.path: Optional[Path] = None
+        # What we tried, so a failure can say why rather than just "skipped".
+        self.attempts: List[str] = []
         for extension, code in ((".mp4", "mp4v"), (".avi", "MJPG")):
             candidate = directory / f"{stem}{extension}"
+            self.attempts.append(f"{code} -> {candidate.name}")
             writer = cv2.VideoWriter(str(candidate), make_fourcc(code), fps, size)
             if writer.isOpened():
                 self._writer = writer
@@ -186,6 +190,13 @@ class Pipeline:
         )
         self.logger.info("motion area: %s", motion_cfg.area)
 
+        # Periodic health reporting: on a headless rig this is the only sign
+        # that the pipeline is still moving and keeping up with the source.
+        status_interval = self.config.logging.status_interval_seconds
+        run_started_at = time.perf_counter()
+        status_at = run_started_at
+        status_frames = 0
+
         ring: deque = deque(maxlen=pre_frames)
         recorder: Optional[_ClipRecorder] = None
         capturing = False
@@ -209,7 +220,12 @@ class Pipeline:
                     capturing = True
                     recorder = _ClipRecorder(self.clips_dir, self._stem(event_index), self.fps, self._clip_size)
                     if not recorder.ok:
-                        self.logger.error("no usable video codec - clips will be skipped")
+                        self.logger.error(
+                            "no usable video codec: motion clips will be skipped - tried %s "
+                            "in %s. OpenCV probably has no encoder built in; check with: "
+                            "python -c \"import cv2; print(cv2.getBuildInformation())\"",
+                            ", ".join(recorder.attempts), self.clips_dir,
+                        )
                     for buffered in ring:
                         recorder.write(buffered)
                     last_motion_index = index
@@ -231,16 +247,57 @@ class Pipeline:
 
             if preview_ok:
                 preview_ok = self._show_preview(motion_frame, result)
+
+            if status_interval > 0:
+                now = time.perf_counter()
+                if now - status_at >= status_interval:
+                    processed = stats.frames_processed
+                    self._log_status(
+                        stats, processed - status_frames, processed,
+                        status_at, now, run_started_at,
+                    )
+                    status_at = now
+                    status_frames = processed
+
             if self._stop:
                 break
 
         if capturing and recorder is not None:
             self._finish_event(recorder, best, event_index, stats)
 
+        if stats.frames_processed == 0:
+            self.logger.warning(
+                "source produced no frames - nothing was processed. Check that %s "
+                "is a readable video, or that the camera is producing frames",
+                getattr(source, "path", type(source).__name__),
+            )
+
         self._close_preview()
         return stats
 
     # -- internals ---------------------------------------------------------- #
+    def _log_status(
+        self,
+        stats: RunStats,
+        window_frames: int,
+        processed: int,
+        window_start: float,
+        now: float,
+        run_start: float,
+    ) -> None:
+        """Log one periodic "still alive and keeping up" line."""
+        elapsed = now - run_start
+        current_fps = window_frames / max(1e-6, now - window_start)
+        average_fps = processed / max(1e-6, elapsed)
+        pace = current_fps / self.fps if self.fps > 0 else 0.0
+        verdict = "keeping up" if pace >= 1.0 else "slower than real time"
+        self.logger.info(
+            "status: %d frames in %.1fs | now %.1f fps, avg %.1f fps | "
+            "source %.2f fps -> %.2fx, %s | %d motion event(s), %d car(s), %d inspector(s)",
+            processed, elapsed, current_fps, average_fps, self.fps, pace, verdict,
+            stats.motion_events, stats.cars_detected, stats.inspectors_flagged,
+        )
+
     def _prepare_dirs(self) -> None:
         # Only create the folders for the stages that are actually enabled.
         self.clips_dir.mkdir(parents=True, exist_ok=True)

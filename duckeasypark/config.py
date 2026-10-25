@@ -172,6 +172,21 @@ class ProcessingConfig:
 
 
 # --------------------------------------------------------------------------- #
+# runtime visibility
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class LoggingConfig:
+    """How much the program says about itself while it runs.
+
+    The rig is meant to run headless and unattended, so the periodic status
+    line is often the only evidence of whether the pipeline is still working
+    and keeping up with the source. ``0`` disables it.
+    """
+
+    status_interval_seconds: float = 30.0
+
+
+# --------------------------------------------------------------------------- #
 # top-level config
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
@@ -184,6 +199,7 @@ class AppConfig:
     config_path: Path
     test: TestModeConfig
     processing: ProcessingConfig
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     raw: Dict[str, Any] = field(default_factory=dict)
 
     def with_mode(self, mode: str) -> "AppConfig":
@@ -277,6 +293,18 @@ def load_config(path: str | Path) -> AppConfig:
         full_res_crops=_as_bool(proc.get("full_res_crops", True), "processing.full_res_crops"),
     )
 
+    # -- logging ------------------------------------------------------------ #
+    log = _section(raw, "logging")
+    logging_cfg = LoggingConfig(
+        status_interval_seconds=max(
+            0.0,
+            _as_float(
+                log.get("status_interval_seconds", 30.0),
+                "logging.status_interval_seconds",
+            ),
+        ),
+    )
+
     # -- modes -------------------------------------------------------------- #
     modes = _section(raw, "modes")
     t = _section(modes, "test")
@@ -301,5 +329,6 @@ def load_config(path: str | Path) -> AppConfig:
         config_path=config_path,
         test=test,
         processing=processing,
+        logging=logging_cfg,
         raw=raw,
     )

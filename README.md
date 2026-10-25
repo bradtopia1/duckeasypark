@@ -73,6 +73,27 @@ python main.py [-c CONFIG] [-m MODE] [--preview | --no-preview] [-v|-vv]
 | `--preview` / `--no-preview` | force the debug preview window on/off |
 | `-v`, `-vv`    | info / debug logging |
 
+### Watching a run
+
+With `-v` the pipeline prints a periodic status line while it works, so you can
+tell a headless rig is still moving and keeping up (interval:
+`logging.status_interval_seconds`, default 30s; `0` disables it):
+
+```
+12:00:14 INFO    duckeasypark.pipeline: status: 1800 frames in 30.1s | now 59.8 fps, avg 59.8 fps | source 30.00 fps -> 2.0x, keeping up | 3 motion event(s), 1 car(s), 0 inspector(s)
+```
+
+`now` is the rate over the last interval and `avg` the whole run so far; the
+multiplier is `now` against the source's own FPS, so `1.0x` means real time. A
+file run that is not `realtime` normally shows well above `1.0x` — that is
+expected, not a problem. On a live feed it is the number to watch: if it sits
+below `1.0x`, the pipeline is falling behind the camera and events will start
+being missed.
+
+Together with the per-event lines and the `done: ...` summary at exit, that is
+the whole picture of a run; on the Pi it all goes to the journal
+(`journalctl -u duckeasypark -f`).
+
 ## Configuration
 
 Everything lives in `config.yaml` (documented inline). The two settings that

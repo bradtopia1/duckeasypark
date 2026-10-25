@@ -63,6 +63,17 @@ processing:
   full_res_crops: true
 
 # --------------------------------------------------------------------------- #
+# Runtime visibility. The rig runs headless, so the log is the only evidence of
+# whether it is working, keeping up, or stuck.
+# --------------------------------------------------------------------------- #
+logging:
+  # Seconds between "status:" lines while running. Each one reports frames
+  # processed, current and average fps, pace against the source fps
+  # ("keeping up" / "slower than real time") and the events so far. Set to 0 to
+  # disable. Needs -v (info) to be visible.
+  status_interval_seconds: 30
+
+# --------------------------------------------------------------------------- #
 # AI backends. Both default to `none`, so the app is motion-only: it records a
 # clip for every motion event and stops. Nothing is detected and no model is
 # loaded. Turn a stage on once you have a real model - or use the mocks to try
