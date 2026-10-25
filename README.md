@@ -19,14 +19,18 @@ video source ──► motion detection ──► save motion clip
                                    action  ◄── (not decided yet)
 ```
 
-Only **test mode** is implemented so far: there is no camera and no live feed —
-frames come from a video file named in the config.
+There are two modes, and they differ only in where the frames come from:
+**test** reads a video file, **motion_capture** watches the live camera.
+Everything after that is the same pipeline with the same settings, so a setup
+tuned against a file behaves the same way live.
 
 ## Requirements
 
 - Python 3.9+
 - `numpy`, `PyYAML`, `opencv-python-headless` (see `requirements.txt`)
 - For the real inspector model: `tflite-runtime` (Pi) or `tensorflow` (dev)
+- For the Pi's camera ribbon (motion_capture mode): `picamera2`, which ships
+  with Raspberry Pi OS — `sudo apt install -y python3-picamera2`
 
 ```bash
 python3 -m venv .venv
@@ -59,6 +63,42 @@ output/
 By default the app is **motion-only** — the AI stages are disabled
 (`detectors.*.backend: none`), so nothing is classified. Enable them (below)
 and `cars/` and `inspectors/` appear too.
+
+## Quick start (motion_capture mode)
+
+Motion-capture mode watches a **live camera** and writes a clip for every motion
+event, using the same sensitivity, region of interest and clip length as test
+mode. Point `mode:` at it and run:
+
+```bash
+.venv/bin/python main.py -m motion_capture -v
+```
+
+It watches until you stop it with Ctrl-C (or, on the rig, until systemd stops
+it — see "Deploy on a Raspberry Pi"). The camera it opens is set by
+`modes.motion_capture`:
+
+```yaml
+modes:
+  motion_capture:
+    device: 0            # camera number, or a device path like /dev/video2
+    backend: auto        # auto | opencv | picamera2
+    width: null          # set BOTH width and height to ask for a size,
+    height: null         # or NEITHER to take the camera's default
+    fps: 30.0
+```
+
+`backend: auto` uses `picamera2` when it is installed (that is, on Raspberry Pi
+OS) and OpenCV everywhere else, so the same config works on the Pi and on your
+desktop. The size and frame rate actually granted are logged at startup, which
+is the quickest way to confirm you got the camera you meant:
+
+```
+18:10:47 INFO    carpi.modes.motion_capture: motion_capture mode: camera=0 backend=opencv -> 640x480 @ 30.0 fps
+```
+
+No camera on your desk yet? Use test mode against a file instead — it runs the
+identical pipeline.
 
 ## Command line
 
@@ -178,7 +218,17 @@ the video's own runtime. Set `realtime: true` to pace playback to the source FPS
 
 ### Modes
 
-`mode:` selects the runner. Currently only `test` exists:
+`mode:` selects the runner, and a mode only says **where the frames come from**.
+There are two:
+
+| mode | frames from | ends by itself? |
+|------|-------------|-----------------|
+| `test` | a video file (`modes.test.video_path`) | yes, when the file ends |
+| `motion_capture` | the live camera (`modes.motion_capture`) | no — Ctrl-C or systemd stops it |
+
+Everything else — motion settings, resolutions, AI backends, clip format — is
+shared and applies to both, so anything you tune against a file in test mode
+behaves the same way off the camera.
 
 ```yaml
 modes:
@@ -188,7 +238,20 @@ modes:
     realtime: false
     show_preview: false
     max_seconds: null
+
+  motion_capture:
+    device: 0            # camera number, or a device path like /dev/video2
+    backend: auto        # auto | opencv | picamera2
+    width: null          # set BOTH width and height to ask for a size,
+    height: null         # or NEITHER to take the camera's default
+    fps: 30.0
+    show_preview: false
 ```
+
+`backend: auto` picks `picamera2` when it is installed (Raspberry Pi OS) and
+OpenCV otherwise; force `opencv` on a Pi to use a USB webcam instead of the CSI
+camera. The `device` may be a number or a path, and the `width` / `height` you
+ask for are a request — the size really granted is logged at startup.
 
 > **Preview note:** the preview window needs a GUI build of OpenCV. The headless
 > wheel used on a Pi cannot open a window — the pipeline detects that and just
@@ -243,8 +306,9 @@ class; the label named `inspector` is what counts as a positive hit.
   `carpi/pipeline.py` (notification, recording, alarm, upload, ...).
 - **A real car detector** — add a class in `carpi/detectors/` implementing
   `CarDetector.detect()` and register it in `detectors/__init__.py`.
-- **A live camera mode** — implement `CameraSource` in `carpi/video.py`
-  (with `picamera2` on the Pi) and add a runner in `carpi/modes/`.
+- **Another frame source** — `CameraSource` in `carpi/video.py` covers a
+  USB/V4L2 camera and the Pi's CSI camera; for anything else (an RTSP stream, a
+  second camera) add a `FrameSource` there and a runner in `carpi/modes/`.
 
 ## Deploy on a Raspberry Pi (headless, starts at boot)
 
@@ -254,11 +318,11 @@ login is a **systemd service**. A ready-made unit lives in
 `main.py` with the venv interpreter, restarts the program if it ever exits, and
 sends all output to the system journal.
 
-> **Not a live watcher yet.** Only `test` mode exists, and it processes a video
-> file to completion and exits — so today the service just replays
-> `modes.test.video_path` and systemd restarts it every few seconds. It becomes
-> a real always-on camera watcher once a live mode is implemented (see the
-> Roadmap); the unit itself won't need to change.
+> **Set `mode: motion_capture`** and the service becomes a real always-on camera
+> watcher: it runs until it is stopped, so it is not restarted over and over.
+> Left on `test` mode it instead replays `modes.test.video_path` and exits after
+> each pass, so systemd restarts it every few seconds — fine for a smoke test,
+> pointless as a deployment. The unit file itself is the same either way.
 
 ### 1. Put the code and a fresh venv on the Pi
 
@@ -316,18 +380,18 @@ deploy/carpi.service          systemd unit for autostart on a Pi
 scripts/make_sample_video.py  synthetic test-clip generator
 carpi/
   config.py                   typed config loading/validation
-  video.py                    FrameSource: FileSource (test) + CameraSource stub
+  video.py                    FrameSource: FileSource (test) + CameraSource
   motion.py                   MOG2 motion detection + ROI + sensitivity
   crop.py                     bounding-box cropping
   pipeline.py                 orchestrates the stages, saves outputs, action hook
   detectors/                  CarDetector interface + mock
   classifiers/                InspectorClassifier interface + mock + tflite
-  modes/                      mode registry + test mode
+  modes/                      mode registry + test / motion_capture modes
 ```
 
 ## Roadmap
 
-- [ ] live camera mode on the Pi (`picamera2`)
+- [x] live camera mode on the Pi (`motion_capture`; OpenCV or `picamera2`)
 - [ ] real car detection (OpenCV DNN or YOLO)
 - [ ] true background removal (segmentation) instead of a bounding-box crop
 - [ ] train + wire in the parking-inspector model

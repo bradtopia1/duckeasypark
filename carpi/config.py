@@ -50,6 +50,26 @@ def _opt_width(value: Any, ctx: str) -> Optional[int]:
     return max(1, _as_int(value, ctx))
 
 
+def _as_choice(value: Any, ctx: str, choices: Tuple[str, ...]) -> str:
+    if not isinstance(value, str) or value.strip().lower() not in choices:
+        raise ConfigError(
+            f"{ctx}: expected one of {', '.join(choices)}, got {value!r}"
+        )
+    return value.strip().lower()
+
+
+def _as_camera_device(value: Any, ctx: str) -> Any:
+    """A camera is named either by an index (0, 1, ...) or by a device path."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise ConfigError(
+        f"{ctx}: expected a camera index (e.g. 0) or a device path "
+        f"(e.g. /dev/video2), got {value!r}"
+    )
+
+
 def _section(data: Dict[str, Any], key: str) -> Dict[str, Any]:
     value = data.get(key, {})
     if value is None:
@@ -156,6 +176,24 @@ class TestModeConfig:
 
 
 @dataclass(frozen=True)
+class MotionCaptureModeConfig:
+    """Where the live frames come from, for ``motion_capture`` mode.
+
+    Only the camera itself is configured here: what happens to the frames
+    (sensitivity, region of interest, clip length, resolutions, AI backends)
+    comes from the shared top-level sections, so test mode and the live camera
+    behave identically.
+    """
+
+    device: Any = 0
+    backend: str = "auto"
+    width: Optional[int] = None
+    height: Optional[int] = None
+    fps: float = 30.0
+    show_preview: bool = False
+
+
+@dataclass(frozen=True)
 class ProcessingConfig:
     """Per-stage resolution, for speed/memory.
 
@@ -198,6 +236,7 @@ class AppConfig:
     output_dir: Path
     config_path: Path
     test: TestModeConfig
+    motion_capture: MotionCaptureModeConfig
     processing: ProcessingConfig
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -320,6 +359,28 @@ def load_config(path: str | Path) -> AppConfig:
         max_seconds=max_seconds,
     )
 
+    mc = _section(modes, "motion_capture")
+    mc_width = _opt_width(mc.get("width", None), "modes.motion_capture.width")
+    mc_height = _opt_width(mc.get("height", None), "modes.motion_capture.height")
+    if (mc_width is None) != (mc_height is None):
+        raise ConfigError(
+            "modes.motion_capture: set both width and height, or neither "
+            "(neither means 'whatever size the camera provides')"
+        )
+
+    motion_capture = MotionCaptureModeConfig(
+        device=_as_camera_device(mc.get("device", 0), "modes.motion_capture.device"),
+        backend=_as_choice(
+            mc.get("backend", "auto"),
+            "modes.motion_capture.backend",
+            ("auto", "opencv", "picamera2"),
+        ),
+        width=mc_width,
+        height=mc_height,
+        fps=max(0.0, _as_float(mc.get("fps", 30.0), "modes.motion_capture.fps")),
+        show_preview=_as_bool(mc.get("show_preview", False), "modes.motion_capture.show_preview"),
+    )
+
     return AppConfig(
         mode=mode,
         motion=motion,
@@ -328,6 +389,7 @@ def load_config(path: str | Path) -> AppConfig:
         output_dir=output_dir,
         config_path=config_path,
         test=test,
+        motion_capture=motion_capture,
         processing=processing,
         logging=logging_cfg,
         raw=raw,

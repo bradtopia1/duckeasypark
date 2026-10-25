@@ -1,8 +1,8 @@
 """Mode registry.
 
-Each mode is a runner ``callable(config, **overrides) -> RunStats``. Only
-``test`` is implemented for now; future modes (live camera, car-only, ...) plug
-in here.
+Each mode is a runner ``callable(config, **overrides) -> RunStats``. Two exist:
+``test`` (frames from a video file) and ``motion_capture`` (frames from the live
+camera). Future modes (car-only, ...) plug in here.
 """
 
 from __future__ import annotations
@@ -10,10 +10,12 @@ from __future__ import annotations
 from typing import Callable
 
 from ..config import ConfigError
+from .motion_capture import run_motion_capture_mode
 from .test import run_test_mode
 
 MODES: dict[str, Callable] = {
     "test": run_test_mode,
+    "motion_capture": run_motion_capture_mode,
 }
 
 

@@ -4,7 +4,10 @@
 # care about. Paths are resolved relative to this file.
 # ---------------------------------------------------------------------------
 
-# Which mode to run. Only "test" is implemented for now.
+# Which mode to run:
+#   test            - frames from a video file (modes.test.video_path)
+#   motion_capture  - frames from the live camera (modes.motion_capture)
+# Both run the same pipeline, so everything below applies to either one.
 mode: test
 
 # --------------------------------------------------------------------------- #
@@ -27,13 +30,13 @@ motion:
   #   * a single number -> a centred band of that size   (e.g. 60)
   #   * [start, end]    -> an explicit span              (e.g. [15, 95])
   area:
-    vertical: [40, 100]     # % of frame height, top -> bottom
-    horizontal: [10, 90]    # % of frame width,  left -> right
+    vertical: [10, 100]     # % of frame height, top -> bottom
+    horizontal: [0, 100]    # % of frame width,  left -> right
 
   # Seconds of video kept before / after a motion event.
   clip:
-    pre_seconds: 0.5
-    post_seconds: 1.0
+    pre_seconds: 1.0
+    post_seconds: 1.5
 
 # --------------------------------------------------------------------------- #
 # Per-stage resolution. Each stage runs at its own size; `null` means "keep the
@@ -45,7 +48,7 @@ processing:
   # Lower is much faster (roughly with the square of the reduction) and uses
   # less RAM; too low and small/distant movement gets missed. 640 is a good
   # starting point for a 1080p camera.
-  motion_width: 320
+  motion_width: 640
 
   # Resolution the car detector sees. Larger keeps more pixels for small/distant
   # cars but costs speed; a real detector is not wired up yet, so this only
@@ -56,11 +59,11 @@ processing:
   # what you want when the clips are training data (you can always downscale,
   # never upscale). Note the pre-roll buffer holds frames at THIS size, so
   # full-res clips use a lot more RAM - lower motion.clip.pre_seconds if needed.
-  clip_width: 640
+  clip_width: null
 
   # Take the car crop from the ORIGINAL full-resolution frame (sharper crops
   # for the inspector model) instead of the detection frame.
-  full_res_crops: false
+  full_res_crops: true
 
 # --------------------------------------------------------------------------- #
 # Runtime visibility. The rig runs headless, so the log is the only evidence of
@@ -115,3 +118,27 @@ modes:
     realtime: false               # sleep to play back at the file's native FPS
     show_preview: false           # needs a GUI build of OpenCV (see README.md)
     max_seconds: null             # stop after N seconds of source (null = no cap)
+
+  motion_capture:
+    # Live camera instead of a file. It records a clip for every motion event
+    # and runs until you stop it (Ctrl-C, or systemd) - this is the mode to put
+    # in the autostart unit on the rig. Sensitivity, area, clip length and the
+    # AI backends all come from the shared sections above, so tune them here in
+    # test mode and the camera behaves the same.
+
+    # Camera number, or a device path (e.g. /dev/video2). For the picamera2
+    # backend this is the camera index the Pi's libcamera knows.
+    device: 0
+
+    # auto      - picamera2 when installed (on a Pi), OpenCV anywhere else
+    # opencv    - USB / V4L2 camera (e.g. force this on a Pi using a webcam)
+    # picamera2 - the Pi's CSI camera ribbon cable
+    backend: auto
+
+    # Ask the camera for this size. Set BOTH or NEITHER (neither = whatever the
+    # camera provides). The size actually granted is logged at startup.
+    width: null
+    height: null
+
+    fps: 30.0                     # requested capture frame rate
+    show_preview: false           # needs a GUI build of OpenCV (see README.md)
