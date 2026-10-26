@@ -18,6 +18,11 @@ so memory stays bounded regardless of how long an event lasts - only the
 pre-roll ring buffer and a single "best" frame are held. Note the ring buffer
 holds frames at the *clip* resolution, so full-res clips mean a much larger
 buffer.
+
+The pipeline can additionally write a crop of the moving region to ``crops/``
+(the top-level ``crops`` section) as raw material for a training set; both modes
+write the same crops. Those crops show whatever moved, not cars - no car
+detector is involved in that path.
 """
 
 from __future__ import annotations
@@ -34,8 +39,8 @@ import cv2
 import numpy as np
 
 from .classifiers.base import ClassificationResult, InspectorClassifier
-from .config import AppConfig
-from .crop import crop_bbox
+from .config import AppConfig, MotionCropConfig
+from .crop import crop_bbox, scale_box
 from .detectors.base import CarDetector, Detection
 from .motion import BBox, MotionDetector, MotionResult
 from .video import FrameSource, make_fourcc
@@ -43,6 +48,19 @@ from .video import FrameSource, make_fourcc
 logger = logging.getLogger("carpi.pipeline")
 
 CAR_CROP_PAD = 0.05
+
+
+def _iou(a: BBox, b: BBox) -> float:
+    """Intersection over union of two boxes, ``0.0`` when they do not overlap."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x0, y0 = max(ax, bx), max(ay, by)
+    x1, y1 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    overlap = (x1 - x0) * (y1 - y0)
+    union = aw * ah + bw * bh - overlap
+    return overlap / union if union > 0 else 0.0
 
 
 @dataclass
@@ -66,6 +84,7 @@ class RunStats:
     motion_events: int = 0
     cars_detected: int = 0
     inspectors_flagged: int = 0
+    crops_saved: int = 0
     clips: List[Path] = field(default_factory=list)
     car_images: List[Path] = field(default_factory=list)
     inspector_images: List[Path] = field(default_factory=list)
@@ -73,7 +92,8 @@ class RunStats:
     def summary(self) -> str:
         return (
             f"{self.frames_processed} frames, {self.motion_events} motion event(s), "
-            f"{self.cars_detected} car(s), {self.inspectors_flagged} inspector(s)"
+            f"{self.cars_detected} car(s), {self.inspectors_flagged} inspector(s), "
+            f"{self.crops_saved} crop(s)"
         )
 
 
@@ -131,6 +151,75 @@ class _ClipRecorder:
         return None
 
 
+class _MotionCropSampler:
+    """Writes crops of the moving region, for use as training-set material.
+
+    A crop is only kept when the region has moved on since the last kept one, so
+    a slow car yields a handful of distinct poses instead of one image per
+    frame. ``min_gap_frames`` caps the rate and ``iou_threshold`` the
+    repetitiveness; both live in the top-level ``crops`` section.
+    """
+
+    def __init__(
+        self,
+        config: MotionCropConfig,
+        directory: Path,
+        run_stamp: str,
+        *,
+        full_res: bool,
+    ) -> None:
+        self.config = config
+        self.directory = directory
+        self.run_stamp = run_stamp
+        self.full_res = full_res
+        self._box: Optional[BBox] = None
+        self._index: Optional[int] = None
+
+    def reset(self) -> None:
+        """Forget the last crop, so the next motion event starts from scratch."""
+        self._box = None
+        self._index = None
+
+    def consider(
+        self,
+        frame: np.ndarray,
+        clip_frame: np.ndarray,
+        result: MotionResult,
+        event_index: int,
+        index: int,
+        stats: RunStats,
+    ) -> None:
+        """Keep a crop of each motion blob, unless the region hasn't moved on."""
+        box = result.union_box
+        if box is None:
+            return
+        if self._index is not None and index - self._index < self.config.min_gap_frames:
+            return
+        if self._box is not None and _iou(box, self._box) >= self.config.iou_threshold:
+            return
+        self._write(frame, clip_frame, result, event_index, index, stats)
+        self._box, self._index = box, index
+
+    def _write(
+        self,
+        frame: np.ndarray,
+        clip_frame: np.ndarray,
+        result: MotionResult,
+        event_index: int,
+        index: int,
+        stats: RunStats,
+    ) -> None:
+        # Boxes come back at the motion resolution; crop from the original frame
+        # unless the config asks for the (smaller) clip resolution.
+        source = frame if self.full_res else clip_frame
+        motion_shape = result.mask.shape[:2]
+        for crop_index, box in enumerate(result.boxes):
+            crop = crop_bbox(source, scale_box(box, motion_shape, source.shape[:2]), pad=self.config.pad)
+            name = f"{self.run_stamp}_event{event_index:03d}_f{index:05d}_c{crop_index}.jpg"
+            cv2.imwrite(str(self.directory / name), crop)
+            stats.crops_saved += 1
+
+
 class Pipeline:
     def __init__(
         self,
@@ -139,6 +228,7 @@ class Pipeline:
         inspector_classifier: Optional[InspectorClassifier],
         *,
         action_hook: Optional[ActionHook] = None,
+        motion_crops: Optional[MotionCropConfig] = None,
         log: Optional[logging.Logger] = None,
     ) -> None:
         self.config = config
@@ -151,6 +241,7 @@ class Pipeline:
         self.clips_dir = self.output_dir / "clips"
         self.cars_dir = self.output_dir / "cars"
         self.inspectors_dir = self.output_dir / "inspectors"
+        self.crops_dir = self.output_dir / "crops"
 
         self.motion_width = config.processing.motion_width
         self.detect_width = config.processing.detect_width
@@ -164,6 +255,17 @@ class Pipeline:
         self._clip_size: Tuple[int, int] = (0, 0)
         self._run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.motion: Optional[MotionDetector] = None
+
+        # Both modes pass the shared crop config; the sampler is simply absent
+        # when it is disabled.
+        self.crops: Optional[_MotionCropSampler] = None
+        if motion_crops is not None and motion_crops.enabled:
+            self.crops = _MotionCropSampler(
+                motion_crops,
+                self.crops_dir,
+                self._run_stamp,
+                full_res=self.full_res_crops,
+            )
 
     # -- public API --------------------------------------------------------- #
     def run(self, source: FrameSource, *, preview: bool = False) -> RunStats:
@@ -189,6 +291,14 @@ class Pipeline:
             self.fps, motion_cfg.sensitivity, self.full_res_crops,
         )
         self.logger.info("motion area: %s", motion_cfg.area)
+        if self.crops is not None:
+            self.logger.info(
+                "motion crops: keeping a crop when the box moves (at least %d frame(s) "
+                "apart, IoU < %.2f) -> %s",
+                self.crops.config.min_gap_frames,
+                self.crops.config.iou_threshold,
+                self.crops_dir,
+            )
 
         # Periodic health reporting: on a headless rig this is the only sign
         # that the pipeline is still moving and keeping up with the source.
@@ -212,6 +322,9 @@ class Pipeline:
             motion_frame = self._to_size(frame, self._motion_size)
             result = self.motion.detect(motion_frame)
             clip_frame = self._to_size(frame, self._clip_size)
+
+            if self.crops is not None and result.motion:
+                self.crops.consider(frame, clip_frame, result, event_index, index, stats)
 
             if not capturing:
                 ring.append(clip_frame.copy())
@@ -244,6 +357,8 @@ class Pipeline:
                     best = None
                     last_motion_index = None
                     ring.clear()
+                    if self.crops is not None:
+                        self.crops.reset()
 
             if preview_ok:
                 preview_ok = self._show_preview(motion_frame, result)
@@ -301,6 +416,8 @@ class Pipeline:
     def _prepare_dirs(self) -> None:
         # Only create the folders for the stages that are actually enabled.
         self.clips_dir.mkdir(parents=True, exist_ok=True)
+        if self.crops is not None:
+            self.crops_dir.mkdir(parents=True, exist_ok=True)
         if self.car_detector is not None:
             self.cars_dir.mkdir(parents=True, exist_ok=True)
         if self.inspector is not None and self.car_detector is not None:
@@ -339,21 +456,8 @@ class Pipeline:
             detect = motion
         else:
             detect = self._to_size(full, self._detect_size)
-        box_detect = self._scale_box(box, motion.shape[:2], detect.shape[:2])
+        box_detect = scale_box(box, motion.shape[:2], detect.shape[:2])
         return (result.area_pixels, detect, full.copy(), box_detect)
-
-    @staticmethod
-    def _scale_box(box: BBox, from_shape: Tuple[int, int], to_shape: Tuple[int, int]) -> BBox:
-        from_h, from_w = from_shape[:2]
-        to_h, to_w = to_shape[:2]
-        if (from_w, from_h) == (to_w, to_h):
-            return box
-        sx, sy = to_w / from_w, to_h / from_h
-        x, y, w, h = box
-        return (
-            int(round(x * sx)), int(round(y * sy)),
-            int(round(w * sx)), int(round(h * sy)),
-        )
 
     def _finish_event(self, recorder: Optional[_ClipRecorder], best, event_index: int, stats: RunStats) -> None:
         stats.motion_events += 1
@@ -378,7 +482,7 @@ class Pipeline:
         # Detect on the (smaller) detection frame, crop from full resolution.
         crop_source = full if self.full_res_crops else detect
         for car_index, detection in enumerate(detections):
-            box = self._scale_box(detection.bbox, detect.shape[:2], crop_source.shape[:2])
+            box = scale_box(detection.bbox, detect.shape[:2], crop_source.shape[:2])
             self._handle_car(crop_source, replace(detection, bbox=box), car_index, stem, clip_path, stats)
 
     def _handle_car(

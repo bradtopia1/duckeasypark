@@ -66,6 +66,29 @@ processing:
   full_res_crops: true
 
 # --------------------------------------------------------------------------- #
+# Crops for a training set - shared by both modes, since the same frames yield
+# the same crops. A cropped image of the moving region is written to
+# output/crops/ for every motion event, named after the clip it came from, e.g.
+# ..._event003_f00121_c0.jpg (frame 121 of event 3, blob 0). Those crops show
+# whatever moved, not cars, so they are raw material for a training set rather
+# than something to feed the inspector model as-is.
+#
+# Note for the rig: crops are never rotated or pruned, and one run (however many
+# days it lasts) shares a single run stamp, so they pile up in one directory.
+# --------------------------------------------------------------------------- #
+crops:
+  enabled: true
+
+  # A crop is kept only when the region has moved on since the last one, so a
+  # slow car gives a handful of distinct poses instead of one image per frame.
+  min_gap_frames: 20      # never save two crops closer together than this.
+                          # This is what sets the rate in practice: at 30 fps
+                          # 20 frames is ~1.5 crops/second, so a car crossing
+                          # in 7 seconds gives roughly 10 crops.
+  iou_threshold: 0.85     # skip if the box still overlaps the last crop this much
+  pad: 0.10               # grow the box by this fraction of its size
+
+# --------------------------------------------------------------------------- #
 # Runtime visibility. The rig runs headless, so the log is the only evidence of
 # whether it is working, keeping up, or stuck.
 # --------------------------------------------------------------------------- #

@@ -57,12 +57,51 @@ You should see a log line for each motion event, and files under `output/`:
 
 ```
 output/
-└── clips/        # the recorded motion clips (*.mp4)
+├── clips/        # the recorded motion clips (*.mp4)
+└── crops/        # crops of the moving region (see below)
 ```
 
 By default the app is **motion-only** — the AI stages are disabled
 (`detectors.*.backend: none`), so nothing is classified. Enable them (below)
 and `cars/` and `inspectors/` appear too.
+
+### Crops for a training set (both modes)
+
+The top-level `crops` section writes a cropped image of the moving region to
+`output/crops/`, named after the clip it came from (`..._event003_f00121_c0.jpg`
+— event 3, frame 121, blob 0). It exists to turn footage into raw material for a
+training set, and both modes write the same crops for the same frames: run it in
+test mode to build a set from a recording, or leave it on in `motion_capture` to
+collect from the camera while the rig watches.
+
+```yaml
+crops:
+  enabled: true
+  min_gap_frames: 20    # never save two crops closer together than this
+  iou_threshold: 0.85   # skip if the box still overlaps the last crop this much
+  pad: 0.10             # grow the box by this fraction of its size
+```
+
+On the rig, crops are never pruned or rotated and one run — however many days it
+lasts — shares a single run stamp, so they keep accumulating in that directory.
+
+A crop is kept only when the region has moved on since the last kept one, so a
+car crossing slowly gives you a handful of distinct poses rather than one image
+per frame: at `iou_threshold: 0.85` a crop is skipped while the box still
+overlaps the previous one by 85%, and `min_gap_frames` caps the rate regardless.
+
+In practice `min_gap_frames` is what sets the volume, because a moving car's box
+changes by more than 15% between one crop and the next and the IoU gate rarely
+fires. At 30 fps, 20 frames is ~1.5 crops per second, so a car crossing in seven
+seconds gives roughly ten crops — distinct poses rather than near-duplicates.
+Lower it for more, raise it for fewer.
+
+Note what is actually being cropped: the **motion region, not a car**. There is
+no car detector on that path, so pedestrians, animals and swaying branches land
+in there too. That is fine for collecting material (and a source of negatives),
+but once you have a real car detector, cropping from its box instead matches
+what the classifier is fed at inference. The full-resolution clips are the
+archive either way, so crops can always be regenerated.
 
 ## Quick start (motion_capture mode)
 

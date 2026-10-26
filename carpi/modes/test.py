@@ -66,6 +66,12 @@ def run_test_mode(
     elif inspector is None:
         logger.info("inspector classification disabled; saving car crops only")
 
-    pipeline = Pipeline(config, car_detector, inspector, action_hook=action_hook)
+    pipeline = Pipeline(
+        config,
+        car_detector,
+        inspector,
+        action_hook=action_hook,
+        motion_crops=config.crops,
+    )
     show_preview = mode_cfg.show_preview if preview is None else preview
     return pipeline.run(source, preview=show_preview)

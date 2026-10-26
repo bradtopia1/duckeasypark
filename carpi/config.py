@@ -167,6 +167,22 @@ class BackendConfig:
 # modes
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
+class MotionCropConfig:
+    """Dumping crops of the moving region, as training-set raw material.
+
+    A crop is only kept when the region has moved on since the last one, so a
+    slow object yields a few distinct poses rather than one image per frame.
+    Both modes write the same crops for the same frames; it is off by default,
+    because on the rig it costs a JPEG write per motion event.
+    """
+
+    enabled: bool = False
+    min_gap_frames: int = 20
+    iou_threshold: float = 0.85
+    pad: float = 0.10
+
+
+@dataclass(frozen=True)
 class TestModeConfig:
     video_path: Path
     loop: bool = False
@@ -238,6 +254,7 @@ class AppConfig:
     test: TestModeConfig
     motion_capture: MotionCaptureModeConfig
     processing: ProcessingConfig
+    crops: MotionCropConfig = field(default_factory=MotionCropConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     raw: Dict[str, Any] = field(default_factory=dict)
 
@@ -332,6 +349,23 @@ def load_config(path: str | Path) -> AppConfig:
         full_res_crops=_as_bool(proc.get("full_res_crops", True), "processing.full_res_crops"),
     )
 
+    # -- motion crops ------------------------------------------------------- #
+    # Shared by both modes: the same frames yield the same crops, so these
+    # knobs live once at the top level instead of under each mode.
+    crops_raw = _section(raw, "crops")
+    crops = MotionCropConfig(
+        enabled=_as_bool(crops_raw.get("enabled", False), "crops.enabled"),
+        min_gap_frames=max(
+            1, _as_int(crops_raw.get("min_gap_frames", 20), "crops.min_gap_frames")
+        ),
+        iou_threshold=_clamp(
+            _as_float(crops_raw.get("iou_threshold", 0.85), "crops.iou_threshold"),
+            0.0,
+            1.0,
+        ),
+        pad=max(0.0, _as_float(crops_raw.get("pad", 0.10), "crops.pad")),
+    )
+
     # -- logging ------------------------------------------------------------ #
     log = _section(raw, "logging")
     logging_cfg = LoggingConfig(
@@ -391,6 +425,7 @@ def load_config(path: str | Path) -> AppConfig:
         test=test,
         motion_capture=motion_capture,
         processing=processing,
+        crops=crops,
         logging=logging_cfg,
         raw=raw,
     )
