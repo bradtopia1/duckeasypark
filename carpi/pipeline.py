@@ -43,6 +43,7 @@ from .config import AppConfig, MotionCropConfig
 from .crop import crop_bbox, scale_box
 from .detectors.base import CarDetector, Detection
 from .motion import BBox, MotionDetector, MotionResult
+from .thermal import cpu_temperature_c
 from .video import FrameSource, make_fourcc
 
 logger = logging.getLogger("carpi.pipeline")
@@ -406,11 +407,17 @@ class Pipeline:
         average_fps = processed / max(1e-6, elapsed)
         pace = current_fps / self.fps if self.fps > 0 else 0.0
         verdict = "keeping up" if pace >= 1.0 else "slower than real time"
+        # A rig that throttles looks exactly like a slow one, so show the
+        # temperature next to the pace when the machine has a CPU sensor.
+        temperature = cpu_temperature_c()
+        thermal = f" | cpu {temperature:.1f}C" if temperature is not None else ""
         self.logger.info(
             "status: %d frames in %.1fs | now %.1f fps, avg %.1f fps | "
-            "source %.2f fps -> %.2fx, %s | %d motion event(s), %d car(s), %d inspector(s)",
+            "source %.2f fps -> %.2fx, %s | %d motion event(s), %d car(s), "
+            "%d inspector(s)%s",
             processed, elapsed, current_fps, average_fps, self.fps, pace, verdict,
             stats.motion_events, stats.cars_detected, stats.inspectors_flagged,
+            thermal,
         )
 
     def _prepare_dirs(self) -> None:

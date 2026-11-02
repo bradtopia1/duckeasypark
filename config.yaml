@@ -95,8 +95,9 @@ crops:
 logging:
   # Seconds between "status:" lines while running. Each one reports frames
   # processed, current and average fps, pace against the source fps
-  # ("keeping up" / "slower than real time") and the events so far. Set to 0 to
-  # disable. Needs -v (info) to be visible.
+  # ("keeping up" / "slower than real time"), the events so far, and the CPU
+  # temperature where the machine exposes one. Set to 0 to disable. Needs -v
+  # (info) to be visible.
   status_interval_seconds: 30
 
 # --------------------------------------------------------------------------- #

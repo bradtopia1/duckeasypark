@@ -159,7 +159,7 @@ tell a headless rig is still moving and keeping up (interval:
 `logging.status_interval_seconds`, default 30s; `0` disables it):
 
 ```
-12:00:14 INFO    carpi.pipeline: status: 1800 frames in 30.1s | now 59.8 fps, avg 59.8 fps | source 30.00 fps -> 2.0x, keeping up | 3 motion event(s), 1 car(s), 0 inspector(s)
+12:00:14 INFO    carpi.pipeline: status: 1800 frames in 30.1s | now 59.8 fps, avg 59.8 fps | source 30.00 fps -> 2.0x, keeping up | 3 motion event(s), 1 car(s), 0 inspector(s) | cpu 55.9C
 ```
 
 `now` is the rate over the last interval and `avg` the whole run so far; the
@@ -168,6 +168,14 @@ file run that is not `realtime` normally shows well above `1.0x` — that is
 expected, not a problem. On a live feed it is the number to watch: if it sits
 below `1.0x`, the pipeline is falling behind the camera and events will start
 being missed.
+
+The trailing `cpu` figure is the CPU/SoC temperature, read from the kernel's
+sensors (`/sys/class/thermal` on a Pi, `/sys/class/hwmon` on x86) — no extra
+package needed. It is worth watching next to the pace, because a rig that is
+throttling looks exactly like one that is merely slow; if the temperature
+climbs toward the Pi's ~80–85 °C throttle point while `now` fps drops, cooling
+is the problem, not the config. On a machine with no CPU sensor the field is
+simply left off.
 
 Together with the per-event lines and the `done: ...` summary at exit, that is
 the whole picture of a run; on the Pi it all goes to the journal
