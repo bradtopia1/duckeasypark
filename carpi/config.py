@@ -241,6 +241,38 @@ class LoggingConfig:
 
 
 # --------------------------------------------------------------------------- #
+# provenance metadata
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class LocationConfig:
+    """Where a position fix comes from.
+
+    ``placeholder`` (the default) reports one configured point - 0, 0 unless
+    overridden - so the records are always populated before any GPS hardware
+    exists. ``none`` reports no fix at all; a real GPS later becomes one more
+    backend.
+    """
+
+    backend: str = "placeholder"
+    options: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MetadataConfig:
+    """When and where each clip and crop was recorded.
+
+    Time is read from the machine clock for now - a clock module or the GPS
+    itself will supply it later. Location comes from a placeholder provider
+    until a GPS exists. Both are written to a sidecar index (one JSON object
+    per line) rather than baked into the filename.
+    """
+
+    enabled: bool = True
+    manifest_path: Optional[Path] = None
+    location: LocationConfig = field(default_factory=LocationConfig)
+
+
+# --------------------------------------------------------------------------- #
 # top-level config
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
@@ -256,6 +288,7 @@ class AppConfig:
     processing: ProcessingConfig
     crops: MotionCropConfig = field(default_factory=MotionCropConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    metadata: MetadataConfig = field(default_factory=MetadataConfig)
     raw: Dict[str, Any] = field(default_factory=dict)
 
     def with_mode(self, mode: str) -> "AppConfig":
@@ -378,6 +411,24 @@ def load_config(path: str | Path) -> AppConfig:
         ),
     )
 
+    # -- provenance metadata ------------------------------------------------ #
+    meta = _section(raw, "metadata")
+    loc = _section(meta, "location")
+    location = LocationConfig(
+        backend=_as_choice(
+            loc.get("backend", "placeholder"),
+            "metadata.location.backend",
+            ("none", "placeholder"),
+        ),
+        options=dict(loc.get("options", {}) or {}),
+    )
+    manifest_raw = meta.get("manifest_path", None)
+    metadata = MetadataConfig(
+        enabled=_as_bool(meta.get("enabled", True), "metadata.enabled"),
+        manifest_path=None if manifest_raw is None else _resolve(str(manifest_raw), base_dir),
+        location=location,
+    )
+
     # -- modes -------------------------------------------------------------- #
     modes = _section(raw, "modes")
     t = _section(modes, "test")
@@ -427,5 +478,6 @@ def load_config(path: str | Path) -> AppConfig:
         processing=processing,
         crops=crops,
         logging=logging_cfg,
+        metadata=metadata,
         raw=raw,
     )

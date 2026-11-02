@@ -42,6 +42,7 @@ from .classifiers.base import ClassificationResult, InspectorClassifier
 from .config import AppConfig, MotionCropConfig
 from .crop import crop_bbox, scale_box
 from .detectors.base import CarDetector, Detection
+from .metadata import ManifestWriter, build_location_provider
 from .motion import BBox, MotionDetector, MotionResult
 from .thermal import cpu_temperature_c
 from .video import FrameSource, make_fourcc
@@ -165,13 +166,13 @@ class _MotionCropSampler:
         self,
         config: MotionCropConfig,
         directory: Path,
-        run_stamp: str,
+        manifest: Optional[ManifestWriter] = None,
         *,
         full_res: bool,
     ) -> None:
         self.config = config
         self.directory = directory
-        self.run_stamp = run_stamp
+        self.manifest = manifest
         self.full_res = full_res
         self._box: Optional[BBox] = None
         self._index: Optional[int] = None
@@ -189,6 +190,8 @@ class _MotionCropSampler:
         event_index: int,
         index: int,
         stats: RunStats,
+        stamp: str,
+        timestamp: datetime,
     ) -> None:
         """Keep a crop of each motion blob, unless the region hasn't moved on."""
         box = result.union_box
@@ -198,7 +201,7 @@ class _MotionCropSampler:
             return
         if self._box is not None and _iou(box, self._box) >= self.config.iou_threshold:
             return
-        self._write(frame, clip_frame, result, event_index, index, stats)
+        self._write(frame, clip_frame, result, event_index, index, stats, stamp, timestamp)
         self._box, self._index = box, index
 
     def _write(
@@ -209,6 +212,8 @@ class _MotionCropSampler:
         event_index: int,
         index: int,
         stats: RunStats,
+        stamp: str,
+        timestamp: datetime,
     ) -> None:
         # Boxes come back at the motion resolution; crop from the original frame
         # unless the config asks for the (smaller) clip resolution.
@@ -216,9 +221,15 @@ class _MotionCropSampler:
         motion_shape = result.mask.shape[:2]
         for crop_index, box in enumerate(result.boxes):
             crop = crop_bbox(source, scale_box(box, motion_shape, source.shape[:2]), pad=self.config.pad)
-            name = f"{self.run_stamp}_event{event_index:03d}_f{index:05d}_c{crop_index}.jpg"
-            cv2.imwrite(str(self.directory / name), crop)
+            name = f"{stamp}_event{event_index:03d}_f{index:05d}_c{crop_index}.jpg"
+            path = self.directory / name
+            cv2.imwrite(str(path), crop)
             stats.crops_saved += 1
+            if self.manifest is not None:
+                self.manifest.record(
+                    kind="crop", file=path, timestamp=timestamp,
+                    event=event_index, frame=index,
+                )
 
 
 class Pipeline:
@@ -255,7 +266,19 @@ class Pipeline:
         self._detect_size: Tuple[int, int] = (0, 0)
         self._clip_size: Tuple[int, int] = (0, 0)
         self._run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Set when a motion event begins, so a run stamped once and left to run
+        # for days still names each clip (and its crops) by when it happened.
+        self._event_stamp: Optional[str] = None
+        self._event_time: Optional[datetime] = None
         self.motion: Optional[MotionDetector] = None
+
+        # Machine-readable provenance (when/where) for every clip and crop.
+        self.manifest: Optional[ManifestWriter] = None
+        if config.metadata.enabled:
+            manifest_path = config.metadata.manifest_path or (self.output_dir / "manifest.jsonl")
+            self.manifest = ManifestWriter(
+                manifest_path, build_location_provider(config.metadata.location)
+            )
 
         # Both modes pass the shared crop config; the sampler is simply absent
         # when it is disabled.
@@ -264,7 +287,7 @@ class Pipeline:
             self.crops = _MotionCropSampler(
                 motion_crops,
                 self.crops_dir,
-                self._run_stamp,
+                self.manifest,
                 full_res=self.full_res_crops,
             )
 
@@ -300,6 +323,13 @@ class Pipeline:
                 self.crops.config.iou_threshold,
                 self.crops_dir,
             )
+        if self.manifest is not None:
+            self.logger.info(
+                "provenance: writing when/where for each clip and crop -> %s "
+                "(location source: %s)",
+                self.manifest.path,
+                self.manifest.location.name,
+            )
 
         # Periodic health reporting: on a headless rig this is the only sign
         # that the pipeline is still moving and keeping up with the source.
@@ -324,12 +354,26 @@ class Pipeline:
             result = self.motion.detect(motion_frame)
             clip_frame = self._to_size(frame, self._clip_size)
 
+            # The first moving frame of an event stamps it, so the clip, its
+            # crops and the manifest all agree on when it happened.
+            if result.motion and self._event_stamp is None:
+                self._event_time = datetime.now().astimezone()
+                self._event_stamp = self._event_time.strftime("%Y%m%d_%H%M%S")
+
             if self.crops is not None and result.motion:
-                self.crops.consider(frame, clip_frame, result, event_index, index, stats)
+                self.crops.consider(
+                    frame, clip_frame, result, event_index, index, stats,
+                    self._event_stamp or self._run_stamp,
+                    self._event_time or datetime.now().astimezone(),
+                )
 
             if not capturing:
                 ring.append(clip_frame.copy())
                 consecutive = consecutive + 1 if result.motion else 0
+                if not result.motion:
+                    # Idle again; the next movement starts a fresh event.
+                    self._event_stamp = None
+                    self._event_time = None
                 if result.motion and consecutive >= trigger_frames:
                     capturing = True
                     recorder = _ClipRecorder(self.clips_dir, self._stem(event_index), self.fps, self._clip_size)
@@ -358,6 +402,8 @@ class Pipeline:
                     best = None
                     last_motion_index = None
                     ring.clear()
+                    self._event_stamp = None
+                    self._event_time = None
                     if self.crops is not None:
                         self.crops.reset()
 
@@ -431,7 +477,8 @@ class Pipeline:
             self.inspectors_dir.mkdir(parents=True, exist_ok=True)
 
     def _stem(self, event_index: int) -> str:
-        return f"{self._run_stamp}_event{event_index:03d}"
+        stamp = self._event_stamp or self._run_stamp
+        return f"{stamp}_event{event_index:03d}"
 
     @staticmethod
     def _scaled_size(size: Tuple[int, int], width: Optional[int]) -> Tuple[int, int]:
@@ -473,6 +520,13 @@ class Pipeline:
         clip_path = recorder.close() if recorder is not None else None
         if clip_path is not None:
             stats.clips.append(clip_path)
+            if self.manifest is not None:
+                self.manifest.record(
+                    kind="clip",
+                    file=clip_path,
+                    timestamp=self._event_time or datetime.now().astimezone(),
+                    event=event_index,
+                )
             self.logger.info("motion event %d -> %s", event_index, clip_path.name)
         elif recorder is not None and not recorder.ok:
             self.logger.info("motion event %d (clip skipped: no usable codec)", event_index)

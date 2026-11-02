@@ -103,6 +103,51 @@ but once you have a real car detector, cropping from its box instead matches
 what the classifier is fed at inference. The full-resolution clips are the
 archive either way, so crops can always be regenerated.
 
+### When and where each clip and crop was recorded
+
+Every filename starts with a compact timestamp of the moment the motion event
+began (`20261103_071834_event000.mp4`), so a rig left running for days names
+each clip by when it happened rather than when the run started.
+
+The exact time and coordinates are deliberately **not** in the filename. They go
+in a sidecar index, `output/manifest.jsonl` — one JSON object per line, one line
+per clip and per crop:
+
+```json
+{"file": "20261103_071834_event000.mp4", "kind": "clip", "timestamp": "2026-11-03T07:18:34.837668+11:00", "latitude": -37.8136, "longitude": 144.9631, "location_source": "fixed", "event": 0}
+```
+
+Coordinates stay out of the name because they are long, lose precision once
+rounded, and would change the filename whenever the rig moves; the manifest is
+easy to load into a training pipeline and can gain fields (heading, speed, fix
+quality) without renaming anything. It is controlled by the `metadata` section:
+
+```yaml
+metadata:
+  enabled: true
+  # manifest_path: output/manifest.jsonl   # default: <output_dir>/manifest.jsonl
+  location:
+    backend: placeholder     # placeholder | none
+    # options:               # only used by 'placeholder'
+    #   latitude: 0.0
+    #   longitude: 0.0
+```
+
+Both facts are stand-ins for hardware the rig does not have yet, so both are
+*always* populated in test mode regardless of what is plugged in. The time comes
+from the machine clock — on a Pi with no RTC that is only correct once NTP (or a
+GPS fix) has set it. The location comes from the `placeholder` backend, which
+reports one configured point (0, 0 by default); the `location_source` field in
+each manifest line marks it as a placeholder rather than a measurement, so the
+output is never mistaken for real coordinates. Set `location.backend: none` if
+you would rather the coordinates come out `null`. A real GPS later means adding
+one more backend and naming it here — nothing else changes.
+
+> The timestamp is wall-clock *processing* time. On the live camera that is the
+> real moment; replaying a file faster than `realtime` compresses the times, so
+> a file run's timestamps reflect when carpi processed the frames, not when the
+> footage was shot.
+
 ## Quick start (motion_capture mode)
 
 Motion-capture mode watches a **live camera** and writes a clip for every motion
@@ -430,6 +475,7 @@ carpi/
   video.py                    FrameSource: FileSource (test) + CameraSource
   motion.py                   MOG2 motion detection + ROI + sensitivity
   crop.py                     bounding-box cropping
+  metadata.py                 provenance: per-event time + location sidecar manifest
   pipeline.py                 orchestrates the stages, saves outputs, action hook
   detectors/                  CarDetector interface + mock
   classifiers/                InspectorClassifier interface + mock + tflite

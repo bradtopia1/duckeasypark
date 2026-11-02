@@ -101,6 +101,36 @@ logging:
   status_interval_seconds: 30
 
 # --------------------------------------------------------------------------- #
+# Provenance: when and where each clip and crop was recorded.
+#
+# Each filename carries a compact timestamp (YYYYMMDD_HHMMSS of the moment the
+# event started), and the exact time and coordinates go into a sidecar index -
+# one JSON object per line, one line per clip and per crop. Coordinates stay out
+# of the filename on purpose: they are long, lose precision once rounded, and
+# change the name whenever the rig moves.
+#
+# Both facts are placeholders for hardware that is not on the rig yet: the time
+# is read from the machine clock (right only after NTP or a GPS fix on a Pi with
+# no RTC), and the location source reports no fix until a GPS module is wired
+# up. Adding one later means naming it in location.backend and nothing else.
+# --------------------------------------------------------------------------- #
+metadata:
+  enabled: true
+
+  # Where the sidecar index is written. Relative paths resolve against this
+  # file; leave it out to default to <output_dir>/manifest.jsonl.
+  # manifest_path: output/manifest.jsonl
+
+  location:
+    # placeholder - report one configured point (0, 0 unless set below), so the
+    #               records are always populated without any GPS hardware
+    # none        - report no fix (latitude/longitude come out null)
+    backend: placeholder
+    # options:                    # only used by the 'placeholder' backend
+    #   latitude: 0.0
+    #   longitude: 0.0
+
+# --------------------------------------------------------------------------- #
 # AI backends. Both default to `none`, so the app is motion-only: it records a
 # clip for every motion event and stops. Nothing is detected and no model is
 # loaded. Turn a stage on once you have a real model - or use the mocks to try
