@@ -1,0 +1,33 @@
+# carpi systemd unit - makes the rig start on boot and keep running.
+#
+# Install (edit the paths/user below first if yours differ):
+#   sudo cp deploy/carpi.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now carpi
+#
+# See the "Deploy on a Raspberry Pi" section of README.md for the full walkthrough.
+
+[Unit]
+Description=carpi car/parking-inspector watcher
+Documentation=file:///home/pi/carpi/README.md
+# Wait for the network (only relevant if you later add uploads/notifications).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Change this to your Pi username if it is not "pi".
+User=pi
+# Must match where you put the code - paths in config.yaml resolve against it.
+WorkingDirectory=/home/pi/carpi
+# Uses the venv interpreter; the mode comes from config.yaml ("mode:").
+ExecStart=/home/pi/carpi/.venv/bin/python /home/pi/carpi/main.py -c config.yaml -v
+# Restart whatever happens, so the rig comes back after a crash/exit.
+Restart=always
+RestartSec=5
+# Logs go to the journal - read them with: journalctl -u carpi -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
