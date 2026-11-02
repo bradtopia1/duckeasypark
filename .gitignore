@@ -12,9 +12,12 @@ output/
 carpi.log
 carpi.log.*
 
-# Operator-supplied and generated videos. Never commit these - they can be
-# huge (a single dashcam clip can be hundreds of MB).
-samples/
+# Operator-supplied and generated videos. Keep these out of git by default -
+# they can be huge (a single dashcam clip can be hundreds of MB). The one
+# exception is the sample clip the config points at (modes.test.video_path),
+# which is tracked so a fresh clone can run test mode out of the box.
+samples/*
+!samples/clip_004.mp4
 
 # Trained models are large binaries; keep them out of git by default
 models/
