@@ -95,6 +95,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"output: {config.output_dir}")
     return 0
 
-qwen
+
 if __name__ == "__main__":
     sys.exit(main())
