@@ -46,9 +46,11 @@ def run_motion_capture_mode(
         fps=mode_cfg.fps,
     )
 
+    codec = f" {source.fourcc}" if source.fourcc else ""
     logger.info(
-        "motion_capture mode: camera=%s backend=%s -> %dx%d @ %.1f fps",
-        mode_cfg.device, source.backend, source.size[0], source.size[1], source.fps,
+        "motion_capture mode: camera=%s backend=%s -> %dx%d @ %.1f fps%s",
+        mode_cfg.device, source.backend, source.size[0], source.size[1],
+        source.fps, codec,
     )
     logger.info(
         "backends: car=%s | inspector=%s",

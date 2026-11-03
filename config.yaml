@@ -191,8 +191,12 @@ modes:
 
     # Ask the camera for this size. Set BOTH or NEITHER (neither = whatever the
     # camera provides). The size actually granted is logged at startup.
-    width: null
-    height: null
+    # 2560x1440 is this camera's highest 30 fps mode (it advertises more, but
+    # only as stills). If the pace drops below 1.0x, 1920x1080 is the lighter
+    # full-HD step down. A size the camera cannot do at 30 fps in MJPEG comes
+    # back lower than asked - watch the startup line.
+    width: 2560
+    height: 1440
 
     fps: 30.0                     # requested capture frame rate
     show_preview: false           # needs a GUI build of OpenCV (see README.md)

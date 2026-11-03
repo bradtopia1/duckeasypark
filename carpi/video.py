@@ -26,6 +26,13 @@ def make_fourcc(code: str) -> int:
     return cv2.VideoWriter_fourcc(*code)  # type: ignore[attr-defined]
 
 
+def _fourcc_name(value: int) -> Optional[str]:
+    """Decode a ``CAP_PROP_FOURCC`` value back into its 4-character code."""
+    if value <= 0:
+        return None
+    return "".join(chr((value >> (8 * i)) & 0xFF) for i in range(4))
+
+
 class FrameSource(ABC):
     """Base class for anything that yields video frames."""
 
@@ -141,6 +148,13 @@ class _OpenCVCamera:
                 f"connected, and not already in use by another program? "
                 f"(list the devices with: ls /dev/video*)"
             )
+        # Ask for MJPEG *before* the size. Over USB 2.0 the raw formats (YUYV,
+        # NV12) only sustain a few fps above 640x480, so a camera asked for a
+        # size in the format it happens to default to answers with 640x480 -
+        # the highest its raw mode manages at 30 fps. MJPEG is what lets a USB
+        # webcam deliver 1080p/1440p at 30 fps. A camera that does not offer it
+        # ignores the request, so this is safe to always do.
+        self._cap.set(cv2.CAP_PROP_FOURCC, make_fourcc("MJPG"))
         if width is not None:
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         if height is not None:
@@ -150,6 +164,7 @@ class _OpenCVCamera:
 
         reported = float(self._cap.get(cv2.CAP_PROP_FPS))
         self.fps = reported if reported > 1e-3 else (fps if fps > 0 else 30.0)
+        self.fourcc = _fourcc_name(int(self._cap.get(cv2.CAP_PROP_FOURCC)))
 
         # Some drivers only report a size once a frame has been read.
         w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -211,6 +226,9 @@ class _Picamera2Camera:
             raise IOError(f"picamera2 could not start the camera: {exc}") from exc
 
         self.fps = fps if fps > 0 else 30.0
+        # libcamera has no fourcc of its own; the property exists so callers
+        # can report one codec name for both backends.
+        self.fourcc: Optional[str] = None
         # Reading one frame both confirms the camera is streaming and tells us
         # the size the driver actually negotiated (it may differ from the ask).
         frame = self.read()
@@ -276,6 +294,11 @@ class CameraSource(FrameSource):
     @property
     def fps(self) -> float:
         return self._camera.fps
+
+    @property
+    def fourcc(self) -> Optional[str]:
+        """The pixel format the driver negotiated (None when it has no name)."""
+        return self._camera.fourcc
 
     @property
     def size(self) -> Tuple[int, int]:

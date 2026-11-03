@@ -452,7 +452,11 @@ class Pipeline:
         current_fps = window_frames / max(1e-6, now - window_start)
         average_fps = processed / max(1e-6, elapsed)
         pace = current_fps / self.fps if self.fps > 0 else 0.0
-        verdict = "keeping up" if pace >= 1.0 else "slower than real time"
+        # The pace is measured over one interval, so at genuine real time it
+        # jitters a little either side of 1.0 (a live camera sits right on the
+        # boundary, since capture is itself wall-clock paced). Tolerate a small
+        # margin so a displayed "1.00x" is never called "slower than real time".
+        verdict = "keeping up" if pace >= 0.995 else "slower than real time"
         # A rig that throttles looks exactly like a slow one, so show the
         # temperature next to the pace when the machine has a CPU sensor.
         temperature = cpu_temperature_c()
