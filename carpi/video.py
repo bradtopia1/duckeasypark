@@ -158,6 +158,7 @@ class _OpenCVCamera:
         width: Optional[int],
         height: Optional[int],
         fps: float,
+        pixel_format: str = "MJPG",
     ) -> None:
         self._cap = cv2.VideoCapture(device)
         if not self._cap.isOpened():
@@ -167,13 +168,15 @@ class _OpenCVCamera:
                 f"connected, and not already in use by another program? "
                 f"(list the devices with: ls /dev/video*)"
             )
-        # Ask for MJPEG *before* the size. Over USB 2.0 the raw formats (YUYV,
-        # NV12) only sustain a few fps above 640x480, so a camera asked for a
-        # size in the format it happens to default to answers with 640x480 -
-        # the highest its raw mode manages at 30 fps. MJPEG is what lets a USB
-        # webcam deliver 1080p/1440p at 30 fps. A camera that does not offer it
-        # ignores the request, so this is safe to always do.
-        self._cap.set(cv2.CAP_PROP_FOURCC, make_fourcc("MJPG"))
+        # Ask for the pixel format *before* the size. MJPEG is the default
+        # because over USB 2.0 the raw formats (YUYV, NV12) only sustain a few
+        # fps above 640x480 - a camera asked for a size in the format it happens
+        # to default to answers 640x480, the highest its raw mode manages at
+        # 30 fps - while MJPEG delivers 1080p/1440p at 30 fps. A slow board may
+        # still prefer raw at a smaller size/rate, because then nothing has to
+        # JPEG-decode every frame; that is what pixel_format selects. A camera
+        # that does not offer the request ignores it.
+        self._cap.set(cv2.CAP_PROP_FOURCC, make_fourcc(pixel_format))
         if width is not None:
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         if height is not None:
@@ -285,6 +288,10 @@ class CameraSource(FrameSource):
     ``picamera2`` - e.g. to use a USB webcam on a Pi, where ``auto`` would
     otherwise pick picamera2 and the CSI camera.
 
+    ``pixel_format`` is the V4L2 format asked of a USB camera (MJPEG by default,
+    or a raw format such as NV12 to skip per-frame JPEG decoding). The CSI
+    camera has no equivalent and ignores it.
+
     Unlike :class:`FileSource`, this never ends on its own: it keeps yielding
     frames until the run is stopped (Ctrl-C, 'q' in the preview, or systemd).
     """
@@ -297,6 +304,7 @@ class CameraSource(FrameSource):
         width: Optional[int] = None,
         height: Optional[int] = None,
         fps: float = 30.0,
+        pixel_format: str = "MJPG",
     ) -> None:
         backend = str(backend).strip().lower()
         if backend == "auto":
@@ -304,7 +312,9 @@ class CameraSource(FrameSource):
         self.backend = backend
 
         if backend == "opencv":
-            self._camera: Any = _OpenCVCamera(device, width, height, fps)
+            self._camera: Any = _OpenCVCamera(
+                device, width, height, fps, pixel_format
+            )
         elif backend == "picamera2":
             self._camera = _Picamera2Camera(device, width, height, fps)
         else:

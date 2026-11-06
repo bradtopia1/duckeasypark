@@ -252,12 +252,17 @@ class MotionCaptureModeConfig:
     Both take ``"auto"`` to pick by board (full resolution at 30 fps on a Pi 4/5,
     720p at 10 fps on a Pi 3B - see ``carpi.hardware``) or an explicit value
     (``"WIDTHxHEIGHT"``, a number). ``fps`` of ``None`` means ``"auto"``.
+
+    ``pixel_format`` is the V4L2 format asked of a USB camera. ``auto`` means
+    MJPEG; a raw format (``nv12``, ``yuyv``) skips the per-frame JPEG decode at
+    the cost of frame rate and USB bandwidth.
     """
 
     device: Any = 0
     backend: str = "auto"
     resolution: str = "auto"
     fps: Optional[float] = None
+    pixel_format: str = "auto"
     show_preview: bool = False
 
 
@@ -516,6 +521,11 @@ def load_config(path: str | Path) -> AppConfig:
             mc.get("resolution", "auto"), "modes.motion_capture.resolution"
         ),
         fps=_as_capture_fps(mc.get("fps", "auto"), "modes.motion_capture.fps"),
+        pixel_format=_as_choice(
+            mc.get("pixel_format", "auto"),
+            "modes.motion_capture.pixel_format",
+            ("auto", "mjpg", "nv12", "yuyv"),
+        ),
         show_preview=_as_bool(mc.get("show_preview", False), "modes.motion_capture.show_preview"),
     )
 

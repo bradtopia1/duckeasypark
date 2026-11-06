@@ -41,6 +41,10 @@ def run_motion_capture_mode(
 
     width, height = resolve_capture_size(mode_cfg.resolution)
     fps = mode_cfg.fps if mode_cfg.fps is not None else default_capture_fps()
+    # "auto" has always meant MJPEG - the format a USB camera needs for high
+    # resolution at 30 fps. A raw format trades that for CPU by skipping the
+    # per-frame JPEG decode (see modes.motion_capture.pixel_format).
+    pixel_format = "MJPG" if mode_cfg.pixel_format == "auto" else mode_cfg.pixel_format.upper()
 
     source = CameraSource(
         device=mode_cfg.device,
@@ -48,6 +52,7 @@ def run_motion_capture_mode(
         width=width,
         height=height,
         fps=fps,
+        pixel_format=pixel_format,
     )
 
     codec = f" {source.fourcc}" if source.fourcc else ""

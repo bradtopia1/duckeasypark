@@ -169,6 +169,7 @@ modes:
     backend: auto        # auto | opencv | picamera2
     resolution: auto     # auto | "WIDTHxHEIGHT" (e.g. "1920x1080")
     fps: auto            # auto | number (e.g. 15.0)
+    pixel_format: auto   # auto (MJPEG) | nv12 | yuyv
 ```
 
 `backend: auto` uses `picamera2` when it is installed (that is, on Raspberry Pi
@@ -362,6 +363,7 @@ modes:
     backend: auto        # auto | opencv | picamera2
     resolution: auto     # auto | "WIDTHxHEIGHT" (e.g. "1920x1080")
     fps: auto            # auto | number (e.g. 15.0)
+    pixel_format: auto   # auto (MJPEG) | nv12 | yuyv
     show_preview: false
 ```
 
@@ -369,6 +371,14 @@ modes:
 OpenCV otherwise; force `opencv` on a Pi to use a USB webcam instead of the CSI
 camera. The `device` may be a number or a path, and the `resolution` / `fps` you
 ask for are a request — what is really granted is logged at startup.
+
+`pixel_format` applies only to the `opencv` backend. `auto` is MJPEG, the only
+format that gets a USB 2.0 webcam to high resolution at 30 fps — but every frame
+then has to be JPEG-decoded, which is real CPU per frame. `nv12` or `yuyv` ask
+for raw instead: nothing to decode, so much cheaper per frame, at the cost of
+frame rate (a camera's raw modes are far slower above 640x480) and more USB
+bandwidth. Worth trying when a slow board is bottlenecked on decode; the format
+actually granted is the codec on the startup line.
 
 > **Preview note:** the preview window needs a GUI build of OpenCV. The headless
 > wheel used on a Pi cannot open a window — the pipeline detects that and just

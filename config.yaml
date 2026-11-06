@@ -202,4 +202,15 @@ modes:
     # requested rate in MJPEG comes back lower than asked - watch that line.
     resolution: auto
     fps: auto
+
+    # Pixel format asked of a USB camera (the opencv backend):
+    #   auto  - MJPEG, the default: the only format that does high resolution at
+    #           30 fps over USB 2.0, but every frame must then be JPEG-decoded
+    #   nv12  - raw; nothing to decode, so much cheaper per frame on a slow
+    #           board, at the cost of frame rate (this camera offers 720p only
+    #           at 15/10/5 fps in raw) and more USB bandwidth
+    #   yuyv  - raw, 4:2:2, the safest raw format but 2 bytes per pixel
+    # The format actually granted is printed as the codec on the startup line.
+    pixel_format: auto
+
     show_preview: false           # needs a GUI build of OpenCV (see README.md)
