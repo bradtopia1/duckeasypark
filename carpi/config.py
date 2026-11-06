@@ -69,6 +69,22 @@ def _as_resolution(value: Any, ctx: str) -> str:
     )
 
 
+def _as_capture_fps(value: Any, ctx: str) -> Optional[float]:
+    """Parse a capture frame-rate spec: ``auto`` (-> ``None``) or a number.
+
+    ``auto`` is resolved later against the board, like ``resolution``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value.strip().lower() == "auto":
+            return None
+        raise ConfigError(
+            f"{ctx}: expected 'auto' or a number, got {value!r}"
+        )
+    return max(0.0, _as_float(value, ctx))
+
+
 def _as_choice(value: Any, ctx: str, choices: Tuple[str, ...]) -> str:
     if not isinstance(value, str) or value.strip().lower() not in choices:
         raise ConfigError(
@@ -219,15 +235,16 @@ class MotionCaptureModeConfig:
     comes from the shared top-level sections, so test mode and the live camera
     behave identically.
 
-    ``resolution`` is the size the camera is asked for: ``"auto"`` picks by
-    board (full resolution on a Pi 4/5, 1080p on a Pi 3B - see
-    ``carpi.hardware``), or an explicit ``"WIDTHxHEIGHT"``.
+    ``resolution`` and ``fps`` are the size and rate the camera is asked for.
+    Both take ``"auto"`` to pick by board (full resolution at 30 fps on a Pi 4/5,
+    720p at 10 fps on a Pi 3B - see ``carpi.hardware``) or an explicit value
+    (``"WIDTHxHEIGHT"``, a number). ``fps`` of ``None`` means ``"auto"``.
     """
 
     device: Any = 0
     backend: str = "auto"
     resolution: str = "auto"
-    fps: float = 30.0
+    fps: Optional[float] = None
     show_preview: bool = False
 
 
@@ -477,7 +494,7 @@ def load_config(path: str | Path) -> AppConfig:
         resolution=_as_resolution(
             mc.get("resolution", "auto"), "modes.motion_capture.resolution"
         ),
-        fps=max(0.0, _as_float(mc.get("fps", 30.0), "modes.motion_capture.fps")),
+        fps=_as_capture_fps(mc.get("fps", "auto"), "modes.motion_capture.fps"),
         show_preview=_as_bool(mc.get("show_preview", False), "modes.motion_capture.show_preview"),
     )
 
