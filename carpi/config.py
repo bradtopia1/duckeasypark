@@ -50,6 +50,25 @@ def _opt_width(value: Any, ctx: str) -> Optional[int]:
     return max(1, _as_int(value, ctx))
 
 
+def _as_resolution(value: Any, ctx: str) -> str:
+    """Parse a camera capture-size spec: ``auto`` or ``WIDTHxHEIGHT``.
+
+    ``auto`` is resolved later against the board carpi is running on (see
+    ``carpi.hardware``); an explicit size is normalised to ``"<w>x<h>"`` so the
+    rest of the code sees one form.
+    """
+    if isinstance(value, str):
+        text = value.strip().lower().replace(" ", "")
+        if text == "auto":
+            return "auto"
+        parts = text.split("x")
+        if len(parts) == 2 and all(p.isdigit() and int(p) > 0 for p in parts):
+            return f"{int(parts[0])}x{int(parts[1])}"
+    raise ConfigError(
+        f"{ctx}: expected 'auto' or a size like '1920x1080', got {value!r}"
+    )
+
+
 def _as_choice(value: Any, ctx: str, choices: Tuple[str, ...]) -> str:
     if not isinstance(value, str) or value.strip().lower() not in choices:
         raise ConfigError(
@@ -199,12 +218,15 @@ class MotionCaptureModeConfig:
     (sensitivity, region of interest, clip length, resolutions, AI backends)
     comes from the shared top-level sections, so test mode and the live camera
     behave identically.
+
+    ``resolution`` is the size the camera is asked for: ``"auto"`` picks by
+    board (full resolution on a Pi 4/5, 1080p on a Pi 3B - see
+    ``carpi.hardware``), or an explicit ``"WIDTHxHEIGHT"``.
     """
 
     device: Any = 0
     backend: str = "auto"
-    width: Optional[int] = None
-    height: Optional[int] = None
+    resolution: str = "auto"
     fps: float = 30.0
     show_preview: bool = False
 
@@ -445,14 +467,6 @@ def load_config(path: str | Path) -> AppConfig:
     )
 
     mc = _section(modes, "motion_capture")
-    mc_width = _opt_width(mc.get("width", None), "modes.motion_capture.width")
-    mc_height = _opt_width(mc.get("height", None), "modes.motion_capture.height")
-    if (mc_width is None) != (mc_height is None):
-        raise ConfigError(
-            "modes.motion_capture: set both width and height, or neither "
-            "(neither means 'whatever size the camera provides')"
-        )
-
     motion_capture = MotionCaptureModeConfig(
         device=_as_camera_device(mc.get("device", 0), "modes.motion_capture.device"),
         backend=_as_choice(
@@ -460,8 +474,9 @@ def load_config(path: str | Path) -> AppConfig:
             "modes.motion_capture.backend",
             ("auto", "opencv", "picamera2"),
         ),
-        width=mc_width,
-        height=mc_height,
+        resolution=_as_resolution(
+            mc.get("resolution", "auto"), "modes.motion_capture.resolution"
+        ),
         fps=max(0.0, _as_float(mc.get("fps", 30.0), "modes.motion_capture.fps")),
         show_preview=_as_bool(mc.get("show_preview", False), "modes.motion_capture.show_preview"),
     )
