@@ -234,6 +234,19 @@ climbs toward the Pi's ~80–85 °C throttle point while `now` fps drops, coolin
 is the problem, not the config. On a machine with no CPU sensor the field is
 simply left off.
 
+A second line follows each status line with where the per-frame time actually
+went, averaged over the same window — useful when a rig sits below `1.0x` and you
+need to know which stage to lighten:
+
+```
+12:00:14 INFO    carpi.pipeline: timing/frame: source 2.4ms, motion 4.6ms, clip 0.0ms, crops 0.0ms, other 1.9ms
+```
+
+`source` is waiting for and decoding the frame, `motion` is background
+subtraction (it runs at `processing.motion_width`, so that is the knob if it
+dominates), `clip` is encoding while a clip is being written (near zero between
+events), `crops` is the training-still sampling, and `other` is everything else.
+
 Together with the per-event lines and the `done: ...` summary at exit, that is
 the whole picture of a run; on the Pi it all goes to the journal
 (`journalctl -u carpi -f`). The same lines are also written to a log file,

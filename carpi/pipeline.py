@@ -33,7 +33,7 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -342,6 +342,12 @@ class Pipeline:
         status_at = run_started_at
         status_frames = 0
 
+        # Seconds spent in each stage over the current status window, so a run
+        # that is slow can be diagnosed from the log (the timing line) rather
+        # than guessed at. Whatever the window has left over is "other".
+        timing = {"source": 0.0, "motion": 0.0, "clip": 0.0, "crops": 0.0}
+        frame_ended_at = run_started_at
+
         ring: deque = deque(maxlen=pre_frames)
         # Arrival times of the last second of frames. On a live feed this is how
         # fast the source is really delivering them, which is what a clip's fps
@@ -358,14 +364,21 @@ class Pipeline:
 
         for index, frame in source.frames():
             now = time.perf_counter()
+            # Waiting for and decoding the frame is the source's share of the
+            # per-frame time.
+            timing["source"] += now - frame_ended_at
             recent_arrivals.append(now)
             while len(recent_arrivals) >= 2 and now - recent_arrivals[0] > 1.0:
                 recent_arrivals.popleft()
 
             stats.frames_processed += 1
+            stage_at = time.perf_counter()
             motion_frame = self._to_size(frame, self._motion_size)
             result = self.motion.detect(motion_frame)
+            timing["motion"] += time.perf_counter() - stage_at
+            stage_at = time.perf_counter()
             clip_frame = self._to_size(frame, self._clip_size)
+            timing["clip"] += time.perf_counter() - stage_at
 
             # The first moving frame of an event stamps it, so the clip, its
             # crops and the manifest all agree on when it happened.
@@ -374,11 +387,13 @@ class Pipeline:
                 self._event_stamp = self._event_time.strftime("%Y%m%d_%H%M%S")
 
             if self.crops is not None and result.motion:
+                stage_at = time.perf_counter()
                 self.crops.consider(
                     frame, clip_frame, result, event_index, index, stats,
                     self._event_stamp or self._run_stamp,
                     self._event_time or datetime.now().astimezone(),
                 )
+                timing["crops"] += time.perf_counter() - stage_at
 
             if not capturing:
                 ring.append(clip_frame.copy())
@@ -400,12 +415,16 @@ class Pipeline:
                             "python -c \"import cv2; print(cv2.getBuildInformation())\"",
                             ", ".join(recorder.attempts), self.clips_dir,
                         )
+                    stage_at = time.perf_counter()
                     for buffered in ring:
                         recorder.write(buffered)
+                    timing["clip"] += time.perf_counter() - stage_at
                     last_motion_index = index
                     best = self._consider(best, frame, motion_frame, result)
             else:
+                stage_at = time.perf_counter()
                 recorder.write(clip_frame)
+                timing["clip"] += time.perf_counter() - stage_at
                 if result.motion:
                     last_motion_index = index
                     best = self._consider(best, frame, motion_frame, result)
@@ -432,13 +451,17 @@ class Pipeline:
                     processed = stats.frames_processed
                     self._log_status(
                         stats, processed - status_frames, processed,
-                        status_at, now, run_started_at,
+                        status_at, now, run_started_at, timing,
                     )
                     status_at = now
                     status_frames = processed
+                    for key in timing:
+                        timing[key] = 0.0
 
             if self._stop:
                 break
+
+            frame_ended_at = time.perf_counter()
 
         if capturing and recorder is not None:
             self._finish_event(recorder, best, event_index, stats)
@@ -462,6 +485,7 @@ class Pipeline:
         window_start: float,
         now: float,
         run_start: float,
+        timing: Dict[str, float],
     ) -> None:
         """Log one periodic "still alive and keeping up" line."""
         elapsed = now - run_start
@@ -485,6 +509,19 @@ class Pipeline:
             stats.motion_events, stats.cars_detected, stats.inspectors_flagged,
             thermal,
         )
+        if window_frames > 0:
+            # Where the per-frame time went, averaged over the same window as
+            # the fps above. "other" is whatever the window has left over once
+            # the measured stages are subtracted - anything not instrumented.
+            per_ms = 1000.0 / window_frames
+            accounted = timing["source"] + timing["motion"] + timing["clip"] + timing["crops"]
+            other = max(0.0, (now - window_start) - accounted)
+            self.logger.info(
+                "timing/frame: source %.1fms, motion %.1fms, clip %.1fms, "
+                "crops %.1fms, other %.1fms",
+                timing["source"] * per_ms, timing["motion"] * per_ms,
+                timing["clip"] * per_ms, timing["crops"] * per_ms, other * per_ms,
+            )
 
     @staticmethod
     def _recent_frame_rate(arrivals: "deque[float]") -> Optional[float]:
