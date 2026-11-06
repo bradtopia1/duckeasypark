@@ -57,7 +57,7 @@ class MotionDetector:
         self._subtractor = cv2.createBackgroundSubtractorMOG2(
             history=config.history,
             varThreshold=config.var_threshold,
-            detectShadows=True,
+            detectShadows=config.shadow_detection,
         )
         self._kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         self._roi_mask = self._build_roi_mask()

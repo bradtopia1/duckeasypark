@@ -8,6 +8,7 @@ camera (motion_capture mode).
 from __future__ import annotations
 
 import importlib.util
+import logging
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Any, Iterator, Optional, Tuple
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger("carpi.video")
 
 
 def make_fourcc(code: str) -> int:
@@ -168,25 +171,31 @@ class _OpenCVCamera:
                 f"connected, and not already in use by another program? "
                 f"(list the devices with: ls /dev/video*)"
             )
-        # Ask for the pixel format *before* the size. MJPEG is the default
-        # because over USB 2.0 the raw formats (YUYV, NV12) only sustain a few
-        # fps above 640x480 - a camera asked for a size in the format it happens
-        # to default to answers 640x480, the highest its raw mode manages at
-        # 30 fps - while MJPEG delivers 1080p/1440p at 30 fps. A slow board may
-        # still prefer raw at a smaller size/rate, because then nothing has to
-        # JPEG-decode every frame; that is what pixel_format selects. A camera
-        # that does not offer the request ignores it.
-        self._cap.set(cv2.CAP_PROP_FOURCC, make_fourcc(pixel_format))
-        if width is not None:
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        if height is not None:
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        if fps > 0:
-            self._cap.set(cv2.CAP_PROP_FPS, fps)
+        # Ask for the format, size and rate, then read back what the driver
+        # actually granted - it may round any of them, and a camera that will
+        # not do a raw format at the requested size usually drops to 640x480
+        # instead, which is how a run quietly ends up at 640x480. So a raw
+        # request that was not granted falls back to MJPEG and asks again,
+        # rather than accept whatever came back.
+        for candidate in [pixel_format] if pixel_format == "MJPG" else [pixel_format, "MJPG"]:
+            self._cap.set(cv2.CAP_PROP_FOURCC, make_fourcc(candidate))
+            if width is not None:
+                self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            if height is not None:
+                self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            if fps > 0:
+                self._cap.set(cv2.CAP_PROP_FPS, fps)
+            granted = _fourcc_name(int(self._cap.get(cv2.CAP_PROP_FOURCC)))
+            if candidate == "MJPG" or granted == candidate:
+                break
+            logger.warning(
+                "camera %r would not capture %s at the requested size (it is in %s) "
+                "- falling back to MJPEG", device, candidate, granted,
+            )
 
         reported = float(self._cap.get(cv2.CAP_PROP_FPS))
         self.fps = reported if reported > 1e-3 else (fps if fps > 0 else 30.0)
-        self.fourcc = _fourcc_name(int(self._cap.get(cv2.CAP_PROP_FOURCC)))
+        self.fourcc = granted
 
         # Some drivers only report a size once a frame has been read.
         w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))

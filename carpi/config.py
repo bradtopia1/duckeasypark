@@ -190,6 +190,7 @@ class MotionConfig:
     pre_seconds: float
     post_seconds: float
     history: int = 500
+    shadow_detection: bool = True
 
     @property
     def var_threshold(self) -> float:
@@ -411,6 +412,9 @@ def load_config(path: str | Path) -> AppConfig:
         pre_seconds=pre_seconds,
         post_seconds=post_seconds,
         history=history,
+        shadow_detection=_as_bool(
+            m.get("shadow_detection", True), "motion.shadow_detection"
+        ),
     )
 
     # -- AI backends -------------------------------------------------------- #

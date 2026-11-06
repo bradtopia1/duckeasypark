@@ -38,6 +38,13 @@ motion:
     pre_seconds: 1.0
     post_seconds: 1.5
 
+  # MOG2 also runs a shadow-detection pass, which roughly doubles the cost of
+  # motion detection - a real share of a slow board's frame budget. Turning it
+  # off makes moving shadows (clouds, the sun) count as motion, so blobs can
+  # come out bigger and events more frequent. Worth trying when motion
+  # dominates the timing line; flip back if you start seeing empty events.
+  shadow_detection: true
+
 # --------------------------------------------------------------------------- #
 # Per-stage resolution. Each stage runs at its own size; `null` means "keep the
 # source resolution". They are separate because the stages want different things
@@ -57,11 +64,13 @@ processing:
   # matters once you enable one. null = keep the source resolution.
   detect_width: 640
 
-  # Resolution clips are written at. null = full source resolution, which is
-  # what you want when the clips are training data (you can always downscale,
-  # never upscale). Note the pre-roll buffer holds frames at THIS size, so
-  # full-res clips use a lot more RAM - lower motion.clip.pre_seconds if needed.
-  clip_width: null
+  # Resolution clips are written at. 640 here because encoding is a real share
+  # of a slow board's frame budget - and the training stills are NOT affected,
+  # because full_res_crops takes them from the camera frame, not the clip. The
+  # archive clips are smaller for it; put null back on a faster board (and note
+  # the pre-roll buffer holds frames at THIS size, so full-res clips use a lot
+  # more RAM - lower motion.clip.pre_seconds if needed).
+  clip_width: 640
 
   # Take the car crop from the ORIGINAL full-resolution frame (sharper crops
   # for the inspector model) instead of the detection frame.
@@ -210,7 +219,9 @@ modes:
     #           board, at the cost of frame rate (this camera offers 720p only
     #           at 15/10/5 fps in raw) and more USB bandwidth
     #   yuyv  - raw, 4:2:2, the safest raw format but 2 bytes per pixel
-    # The format actually granted is printed as the codec on the startup line.
-    pixel_format: auto
+    # The format actually granted is printed as the codec on the startup line -
+    # if it still says MJPG, the camera refused the raw request and carpi fell
+    # back. nv12 also restores a real 10 fps at 720p, which MJPEG cannot do.
+    pixel_format: nv12
 
     show_preview: false           # needs a GUI build of OpenCV (see README.md)

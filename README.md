@@ -299,7 +299,7 @@ you can always downscale later but never upscale.
 processing:
   motion_width: auto    # auto = per-board (640, or 320 on a Pi 3B)
   detect_width: 640     # car-detector input
-  clip_width: null      # null = save clips at the source resolution
+  clip_width: 640       # smaller clips cost nothing in the stills
   full_res_crops: true  # crop cars from the original full-res frame
 ```
 
