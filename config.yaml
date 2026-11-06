@@ -189,14 +189,15 @@ modes:
     # picamera2 - the Pi's CSI camera ribbon cable
     backend: auto
 
-    # The size to ask the camera for. `auto` sizes it to the board carpi runs
-    # on: the camera's full 30 fps mode (2560x1440 - it advertises more, but
-    # only as stills) on a Pi 4 or 5, and on any non-Pi machine; 1080p on a Pi
-    # 3B, which cannot decode full-res MJPEG at 30 fps. Pin it with an explicit
-    # size instead, e.g. "1920x1080". Either way the size actually granted is
-    # logged at startup, and a size the camera cannot do at 30 fps in MJPEG
-    # comes back lower than asked - watch that line.
+    # The size and rate to ask the camera for. `auto` picks both from the board
+    # carpi runs on: the camera's full 30 fps mode (2560x1440 - it advertises
+    # more, but only as stills) at 30 fps on a Pi 4 or 5 and on any non-Pi
+    # machine, and 1280x720 at 10 fps on a Pi 3B, which cannot keep up at more.
+    # 720p keeps a car crop near the classifier's input size; 10 fps is still
+    # plenty of distinct poses and is what buys real time on the 3B. Pin either
+    # with an explicit value (e.g. "1920x1080", or 15.0). The size actually
+    # granted is logged at startup, and one the camera cannot do at the
+    # requested rate in MJPEG comes back lower than asked - watch that line.
     resolution: auto
-
-    fps: 30.0                     # requested capture frame rate
+    fps: auto
     show_preview: false           # needs a GUI build of OpenCV (see README.md)

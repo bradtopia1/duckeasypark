@@ -21,7 +21,7 @@ from typing import Optional
 from ..classifiers import build_inspector_classifier
 from ..config import AppConfig
 from ..detectors import build_car_detector
-from ..hardware import board_model, resolve_capture_size
+from ..hardware import board_model, default_capture_fps, resolve_capture_size
 from ..pipeline import ActionHook, Pipeline, RunStats
 from ..video import CameraSource
 
@@ -40,13 +40,14 @@ def run_motion_capture_mode(
     inspector = build_inspector_classifier(config.inspector)
 
     width, height = resolve_capture_size(mode_cfg.resolution)
+    fps = mode_cfg.fps if mode_cfg.fps is not None else default_capture_fps()
 
     source = CameraSource(
         device=mode_cfg.device,
         backend=mode_cfg.backend,
         width=width,
         height=height,
-        fps=mode_cfg.fps,
+        fps=fps,
     )
 
     codec = f" {source.fourcc}" if source.fourcc else ""
@@ -55,10 +56,10 @@ def run_motion_capture_mode(
         mode_cfg.device, source.backend, source.size[0], source.size[1],
         source.fps, codec,
     )
-    if mode_cfg.resolution == "auto":
+    if mode_cfg.resolution == "auto" or mode_cfg.fps is None:
         logger.info(
-            "resolution auto: asked %dx%d for board %r",
-            width, height, board_model() or "not a Raspberry Pi",
+            "capture auto: asked %dx%d @ %.0f fps for board %r",
+            width, height, fps, board_model() or "not a Raspberry Pi",
         )
     logger.info(
         "backends: car=%s | inspector=%s",

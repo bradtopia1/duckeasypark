@@ -2,15 +2,20 @@
 
 The rig moves between Raspberry Pi models with very different decoding power,
 and a frame costs roughly with its pixel count: a Pi 4 or 5 can take the
-camera's full-resolution 30 fps mode, while a Pi 3B can only manage 1080p -
-asking it for more just drops frames. Rather than editing the config whenever
-the code lands on another board, the capture size defaults to a per-board value
-(``resolution: auto``) and can still be pinned explicitly.
+camera's full-resolution 30 fps mode, while a Pi 3B cannot, so asking it for the
+same drops frames. Rather than editing the config whenever the code lands on
+another board, the capture size and rate both default to a per-board profile
+(``resolution: auto`` and ``fps: auto``) and can still be pinned explicitly.
+
+The trade the weak profile makes is deliberate: it keeps 720p because a crop can
+only be as sharp as the captured frame (the training stills are cropped from
+these frames), and gives up frame rate instead, which costs the dataset very
+little - a car does not change appearance between samples.
 
 Detection is the kernel's own device-tree model string, a plain file under
 ``/proc`` - the same dependency-free approach as ``thermal.py``. A machine that
 is not a Raspberry Pi (a dev box) has no such file, and carpi falls back to the
-full size.
+full profile.
 """
 
 from __future__ import annotations
@@ -21,16 +26,19 @@ from typing import Optional, Tuple
 # device-tree machine, which is how a dev box is recognised.
 _MODEL_PATH = "/proc/device-tree/model"
 
-# The camera's full-resolution 30 fps mode (MJPEG) - what the rig asks for on a
-# capable board. This is the size the config asked for before it was automatic.
+# What a capable board (Pi 4/5, or a machine that is not a Pi at all) asks for:
+# the camera's full-resolution 30 fps MJPEG mode.
 FULL_CAPTURE_SIZE = (2560, 1440)
+FULL_CAPTURE_FPS = 30.0
 
-# The step down for the weaker boards (Pi 3B and older): 1080p is about as much
-# as they can decode at 30 fps before dropping frames.
-LIGHT_CAPTURE_SIZE = (1920, 1080)
+# The weaker boards (Pi 3B and older) cannot decode the full size at 30 fps, so
+# they capture 720p at 10 fps. 720p keeps a car crop near the classifier's input
+# size without upscaling and 10 fps is still plenty of distinct poses.
+LIGHT_CAPTURE_SIZE = (1280, 720)
+LIGHT_CAPTURE_FPS = 10.0
 
-# Pi generations at or above this one are given the full capture size.
-_FULL_SIZE_GENERATION = 4
+# Pi generations at or above this one get the full profile.
+_FULL_PROFILE_GENERATION = 4
 
 
 def board_model() -> Optional[str]:
@@ -78,17 +86,28 @@ def pi_generation(model: Optional[str] = None) -> Optional[int]:
     return None
 
 
+def _needs_light_profile(model: Optional[str]) -> bool:
+    """True for a Pi 3B and older boards, which cannot take the full profile."""
+    generation = pi_generation(model)
+    return generation is not None and generation < _FULL_PROFILE_GENERATION
+
+
 def default_capture_size(model: Optional[str] = None) -> Tuple[int, int]:
     """The capture size to ask for on this board, as ``(width, height)``.
 
     Full resolution on a Pi 4/5 - and on anything that is not a Raspberry Pi,
-    such as the dev machine; 1080p on a Pi 3B and older boards, which cannot
-    decode the full size at 30 fps.
+    such as the dev machine; 720p on a Pi 3B and older boards.
     """
-    generation = pi_generation(model)
-    if generation is not None and generation < _FULL_SIZE_GENERATION:
-        return LIGHT_CAPTURE_SIZE
-    return FULL_CAPTURE_SIZE
+    return LIGHT_CAPTURE_SIZE if _needs_light_profile(model) else FULL_CAPTURE_SIZE
+
+
+def default_capture_fps(model: Optional[str] = None) -> float:
+    """The capture frame rate to ask for on this board.
+
+    30 fps on a capable board; 10 fps on a Pi 3B and older, which is enough for
+    the training stills and is what keeps the pipeline at real time.
+    """
+    return LIGHT_CAPTURE_FPS if _needs_light_profile(model) else FULL_CAPTURE_FPS
 
 
 def resolve_capture_size(spec: str, model: Optional[str] = None) -> Tuple[int, int]:

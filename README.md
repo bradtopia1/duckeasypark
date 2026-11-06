@@ -168,17 +168,17 @@ modes:
     device: 0            # camera number, or a device path like /dev/video2
     backend: auto        # auto | opencv | picamera2
     resolution: auto     # auto | "WIDTHxHEIGHT" (e.g. "1920x1080")
-    fps: 30.0
+    fps: auto            # auto | number (e.g. 15.0)
 ```
 
 `backend: auto` uses `picamera2` when it is installed (that is, on Raspberry Pi
 OS) and OpenCV everywhere else, so the same config works on the Pi and on your
-desktop. `resolution: auto` sizes the capture to the board it is running on —
-the camera's full resolution on a Pi 4 or 5, 1080p on a Pi 3B, which cannot
-decode full-res MJPEG at 30 fps — so the same config suits any of them; pin an
-explicit `"1920x1080"` to override. The size and frame rate actually granted are
-logged at startup, which is the quickest way to confirm you got the camera you
-meant:
+desktop. `resolution: auto` and `fps: auto` size the capture to the board they
+are running on — the camera's full resolution at 30 fps on a Pi 4 or 5, and
+1280x720 at 10 fps on a Pi 3B, which cannot keep up at more — so the same config
+suits any of them; pin `"1920x1080"` or `fps: 15.0` to override. The size and
+frame rate actually granted are logged at startup, which is the quickest way to
+confirm you got the camera you meant:
 
 ```
 18:10:47 INFO    carpi.modes.motion_capture: motion_capture mode: camera=0 backend=opencv -> 2560x1440 @ 30.0 fps MJPG
@@ -347,14 +347,14 @@ modes:
     device: 0            # camera number, or a device path like /dev/video2
     backend: auto        # auto | opencv | picamera2
     resolution: auto     # auto | "WIDTHxHEIGHT" (e.g. "1920x1080")
-    fps: 30.0
+    fps: auto            # auto | number (e.g. 15.0)
     show_preview: false
 ```
 
 `backend: auto` picks `picamera2` when it is installed (Raspberry Pi OS) and
 OpenCV otherwise; force `opencv` on a Pi to use a USB webcam instead of the CSI
-camera. The `device` may be a number or a path, and the `resolution` you ask for
-is a request — the size really granted is logged at startup.
+camera. The `device` may be a number or a path, and the `resolution` / `fps` you
+ask for are a request — what is really granted is logged at startup.
 
 > **Preview note:** the preview window needs a GUI build of OpenCV. The headless
 > wheel used on a Pi cannot open a window — the pipeline detects that and just
