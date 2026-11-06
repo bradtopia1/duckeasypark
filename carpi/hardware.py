@@ -37,6 +37,11 @@ FULL_CAPTURE_FPS = 30.0
 LIGHT_CAPTURE_SIZE = (1280, 720)
 LIGHT_CAPTURE_FPS = 10.0
 
+# The width motion detection runs at. It is resized from every frame, so on a
+# slow board it is the biggest per-frame knob: a weak board runs it smaller.
+FULL_MOTION_WIDTH = 640
+LIGHT_MOTION_WIDTH = 320
+
 # Pi generations at or above this one get the full profile.
 _FULL_PROFILE_GENERATION = 4
 
@@ -108,6 +113,15 @@ def default_capture_fps(model: Optional[str] = None) -> float:
     the training stills and is what keeps the pipeline at real time.
     """
     return LIGHT_CAPTURE_FPS if _needs_light_profile(model) else FULL_CAPTURE_FPS
+
+
+def default_motion_width(model: Optional[str] = None) -> int:
+    """The width motion detection runs at on this board.
+
+    Motion detection runs on every frame, so on a weak board a smaller width is
+    the cheapest way to buy back real time.
+    """
+    return LIGHT_MOTION_WIDTH if _needs_light_profile(model) else FULL_MOTION_WIDTH
 
 
 def resolve_capture_size(spec: str, model: Optional[str] = None) -> Tuple[int, int]:

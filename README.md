@@ -283,7 +283,7 @@ different things:
 
 | key | controls | sensible value |
 |-----|----------|----------------|
-| `processing.motion_width` | resolution of motion detection | small — `640`, or `320`–`480` if CPU-bound |
+| `processing.motion_width` | resolution of motion detection | `auto` (640, or 320 on a Pi 3B), or `320`–`480` if CPU-bound |
 | `processing.detect_width` | resolution the car detector sees | as large as the model allows — `640`–`1280` |
 | `processing.clip_width` | resolution clips are written at | `null` (full res) when clips are training data |
 
@@ -296,7 +296,7 @@ you can always downscale later but never upscale.
 
 ```yaml
 processing:
-  motion_width: 640     # cheap trigger
+  motion_width: auto    # auto = per-board (640, or 320 on a Pi 3B)
   detect_width: 640     # car-detector input
   clip_width: null      # null = save clips at the source resolution
   full_res_crops: true  # crop cars from the original full-res frame
@@ -313,8 +313,9 @@ a 1080p30 source (measured, motion-only, one core):
 
 `full_res_crops: true` keeps car crops sharp for the inspector model even though
 detection runs small. A Pi 3B is roughly an order of magnitude slower than the
-desktop these numbers came from, so lower `motion_width` (and a lower camera
-capture resolution) matters a lot there.
+desktop these numbers came from, which is why `motion_width: auto` sizes it down
+there and why the capture resolution drops too — leave both on `auto` and the
+board picks for itself.
 
 > **Full-res clips cost RAM.** The pre-roll buffer holds frames at the clip
 > resolution, so `clip_width: null` buffers full-resolution frames (~6 MB each at

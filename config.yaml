@@ -46,9 +46,11 @@ motion:
 processing:
   # Motion detection only needs to be a coarse trigger, so it runs smallest.
   # Lower is much faster (roughly with the square of the reduction) and uses
-  # less RAM; too low and small/distant movement gets missed. 640 is a good
-  # starting point for a 1080p camera.
-  motion_width: 640
+  # less RAM; too low and small/distant movement gets missed. `auto` picks by
+  # board - 640 on a Pi 4/5 (and any non-Pi machine), 320 on a Pi 3B, where the
+  # detector runs on every frame and is the biggest per-frame cost. Set a number
+  # to override, or null to run at the source resolution.
+  motion_width: auto
 
   # Resolution the car detector sees. Larger keeps more pixels for small/distant
   # cars but costs speed; a real detector is not wired up yet, so this only

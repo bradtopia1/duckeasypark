@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
+from .hardware import default_motion_width
+
 
 class ConfigError(ValueError):
     """Raised when the config file is missing, malformed, or inconsistent."""
@@ -48,6 +50,17 @@ def _opt_width(value: Any, ctx: str) -> Optional[int]:
     if value is None:
         return None
     return max(1, _as_int(value, ctx))
+
+
+def _motion_width(value: Any, ctx: str) -> Optional[int]:
+    """Parse the motion-detection width: ``auto``, a number, or ``None``.
+
+    ``auto`` resolves here, against the board carpi is running on (see
+    ``carpi.hardware``); ``None`` keeps the source resolution, as before.
+    """
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return default_motion_width()
+    return _opt_width(value, ctx)
 
 
 def _as_resolution(value: Any, ctx: str) -> str:
@@ -256,6 +269,9 @@ class ProcessingConfig:
     detection only needs a coarse trigger, the car detector wants more detail,
     and clips are worth keeping at full resolution as training data. ``None``
     means "keep the source resolution" for that stage.
+
+    ``motion_width`` is already resolved here: the config value ``auto`` becomes
+    this board's default (see ``carpi.hardware``).
     """
 
     motion_width: Optional[int] = None
@@ -414,8 +430,13 @@ def load_config(path: str | Path) -> AppConfig:
     # ``width`` is the pre-split single knob. Keep honouring it as the default
     # for the motion and detection stages so existing configs still work.
     legacy_width = proc.get("width", None)
+    # Neither key set: size motion detection to the board rather than leaving it
+    # at the full source resolution, which is the slowest option.
+    motion_width_default = legacy_width if legacy_width is not None else "auto"
     processing = ProcessingConfig(
-        motion_width=_opt_width(proc.get("motion_width", legacy_width), "processing.motion_width"),
+        motion_width=_motion_width(
+            proc.get("motion_width", motion_width_default), "processing.motion_width"
+        ),
         detect_width=_opt_width(proc.get("detect_width", legacy_width), "processing.detect_width"),
         clip_width=_opt_width(proc.get("clip_width", None), "processing.clip_width"),
         full_res_crops=_as_bool(proc.get("full_res_crops", True), "processing.full_res_crops"),
