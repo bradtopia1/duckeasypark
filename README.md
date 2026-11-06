@@ -217,6 +217,15 @@ expected, not a problem. On a live feed it is the number to watch: if it sits
 below `1.0x`, the pipeline is falling behind the camera and events will start
 being missed.
 
+On a live feed, below `1.0x` the camera keeps producing frames the pipeline
+never sees — the driver drops them — so a clip written at the camera's nominal
+fps would play back fast-forward. carpi instead writes each clip at the rate the
+frames really arrived at, so the clip stays the right length: at `0.20x` a
+30 fps clip becomes a 6 fps one, and the event line says why
+(`motion event 3 -> ..._event003.mp4 (6.0 fps - the source was delivering frames
+below its 30.0 fps, so the clip stays real speed)`). A file run never drops
+frames, so its clips always keep the file's own fps.
+
 The trailing `cpu` figure is the CPU/SoC temperature, read from the kernel's
 sensors (`/sys/class/thermal` on a Pi, `/sys/class/hwmon` on x86) — no extra
 package needed. It is worth watching next to the pace, because a rig that is

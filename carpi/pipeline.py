@@ -123,6 +123,10 @@ class _ClipRecorder:
     def __init__(self, directory: Path, stem: str, fps: float, size: Tuple[int, int]) -> None:
         self._writer: Optional[cv2.VideoWriter] = None
         self.path: Optional[Path] = None
+        # The rate this clip is written at, kept so the event can report it -
+        # on a live feed it is the achieved capture rate, not the camera's
+        # nominal fps (see Pipeline._clip_fps).
+        self.fps = fps
         # What we tried, so a failure can say why rather than just "skipped".
         self.attempts: List[str] = []
         for extension, code in ((".mp4", "mp4v"), (".avi", "MJPG")):
@@ -339,6 +343,10 @@ class Pipeline:
         status_frames = 0
 
         ring: deque = deque(maxlen=pre_frames)
+        # Arrival times of the last second of frames. On a live feed this is how
+        # fast the source is really delivering them, which is what a clip's fps
+        # should follow when the pipeline is behind (see _clip_fps).
+        recent_arrivals: deque = deque()
         recorder: Optional[_ClipRecorder] = None
         capturing = False
         last_motion_index: Optional[int] = None
@@ -349,6 +357,11 @@ class Pipeline:
         preview_ok = bool(preview)
 
         for index, frame in source.frames():
+            now = time.perf_counter()
+            recent_arrivals.append(now)
+            while len(recent_arrivals) >= 2 and now - recent_arrivals[0] > 1.0:
+                recent_arrivals.popleft()
+
             stats.frames_processed += 1
             motion_frame = self._to_size(frame, self._motion_size)
             result = self.motion.detect(motion_frame)
@@ -376,7 +389,10 @@ class Pipeline:
                     self._event_time = None
                 if result.motion and consecutive >= trigger_frames:
                     capturing = True
-                    recorder = _ClipRecorder(self.clips_dir, self._stem(event_index), self.fps, self._clip_size)
+                    clip_fps = self._clip_fps(source, self._recent_frame_rate(recent_arrivals))
+                    recorder = _ClipRecorder(
+                        self.clips_dir, self._stem(event_index), clip_fps, self._clip_size
+                    )
                     if not recorder.ok:
                         self.logger.error(
                             "no usable video codec: motion clips will be skipped - tried %s "
@@ -470,6 +486,35 @@ class Pipeline:
             thermal,
         )
 
+    @staticmethod
+    def _recent_frame_rate(arrivals: "deque[float]") -> Optional[float]:
+        """Frames per second the source delivered over a recent window.
+
+        ``arrivals`` holds the timestamps of roughly the last second of frames.
+        ``None`` until there are two to measure between.
+        """
+        if len(arrivals) < 2:
+            return None
+        span = arrivals[-1] - arrivals[0]
+        return (len(arrivals) - 1) / span if span > 0 else None
+
+    def _clip_fps(self, source: FrameSource, recent_rate: Optional[float]) -> float:
+        """The frame rate to write the current clip at.
+
+        A live camera is paced to real time, so when the pipeline cannot keep up
+        the driver drops frames and the source really delivers them at less than
+        its nominal fps; writing the clip at that achieved rate keeps it the
+        right length instead of playing back fast-forward. A file - even one
+        replayed faster than real time - drops nothing and keeps its own fps, as
+        does a live feed that is keeping up (the small tolerance absorbs the
+        normal jitter of a real-time feed).
+        """
+        if recent_rate is None or not source.realtime_paced:
+            return self.fps
+        if recent_rate >= self.fps * 0.95:
+            return self.fps
+        return max(1.0, recent_rate)
+
     def _prepare_dirs(self) -> None:
         # Only create the folders for the stages that are actually enabled.
         self.clips_dir.mkdir(parents=True, exist_ok=True)
@@ -531,7 +576,14 @@ class Pipeline:
                     timestamp=self._event_time or datetime.now().astimezone(),
                     event=event_index,
                 )
-            self.logger.info("motion event %d -> %s", event_index, clip_path.name)
+            if recorder is not None and recorder.fps < self.fps * 0.95:
+                self.logger.info(
+                    "motion event %d -> %s (%0.1f fps - the source was delivering "
+                    "frames below its %.1f fps, so the clip stays real speed)",
+                    event_index, clip_path.name, recorder.fps, self.fps,
+                )
+            else:
+                self.logger.info("motion event %d -> %s", event_index, clip_path.name)
         elif recorder is not None and not recorder.ok:
             self.logger.info("motion event %d (clip skipped: no usable codec)", event_index)
 

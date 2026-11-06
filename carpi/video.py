@@ -53,6 +53,18 @@ class FrameSource(ABC):
     def close(self) -> None:  # pragma: no cover - overridden where needed
         pass
 
+    @property
+    def realtime_paced(self) -> bool:
+        """True when frames arrive in wall-clock time, as a live camera's do.
+
+        A paced source drops frames when the pipeline cannot keep up, so the
+        pipeline writes a clip at the rate the frames really arrived at rather
+        than the source's nominal fps (see ``Pipeline``). A file - even one
+        replayed faster or slower than real time - is not paced: every frame is
+        processed and the clip keeps the file's own fps.
+        """
+        return True
+
 
 class FileSource(FrameSource):
     """Reads frames from a video file. Used by test mode."""
@@ -97,6 +109,13 @@ class FileSource(FrameSource):
     @property
     def size(self) -> Tuple[int, int]:
         return self._size
+
+    @property
+    def realtime_paced(self) -> bool:
+        # Only when paced to real time does the file act like a live feed, in
+        # which case a clip should follow the achieved rate rather than the
+        # file's own fps.
+        return self.realtime
 
     def frames(self) -> Iterator[Tuple[int, np.ndarray]]:
         index = 0
