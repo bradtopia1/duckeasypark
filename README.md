@@ -286,7 +286,7 @@ different things:
 |-----|----------|----------------|
 | `processing.motion_width` | resolution of motion detection | `auto` (640, or 320 on a Pi 3B), or `320`–`480` if CPU-bound |
 | `processing.detect_width` | resolution the car detector sees | as large as the model allows — `640`–`1280` |
-| `processing.clip_width` | resolution clips are written at | `null` (full res) when clips are training data |
+| `processing.clip_width` | resolution clips are written at | `auto` (source size, or 640 on a Pi 3B) |
 
 Motion detection only needs to be a coarse trigger, so it runs smallest: lower is
 much faster (roughly with the square of the reduction) and uses less RAM, and too
@@ -299,7 +299,7 @@ you can always downscale later but never upscale.
 processing:
   motion_width: auto    # auto = per-board (640, or 320 on a Pi 3B)
   detect_width: 640     # car-detector input
-  clip_width: 640       # smaller clips cost nothing in the stills
+  clip_width: auto      # source size, or 640 on a Pi 3B
   full_res_crops: true  # crop cars from the original full-res frame
 ```
 

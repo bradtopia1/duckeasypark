@@ -64,13 +64,14 @@ processing:
   # matters once you enable one. null = keep the source resolution.
   detect_width: 640
 
-  # Resolution clips are written at. 640 here because encoding is a real share
-  # of a slow board's frame budget - and the training stills are NOT affected,
-  # because full_res_crops takes them from the camera frame, not the clip. The
-  # archive clips are smaller for it; put null back on a faster board (and note
-  # the pre-roll buffer holds frames at THIS size, so full-res clips use a lot
-  # more RAM - lower motion.clip.pre_seconds if needed).
-  clip_width: 640
+  # Resolution clips are written at. `auto` follows the board: the source size
+  # (e.g. 2560x1440 on a Pi 5), or 640 on a Pi 3B, where encoding is a real
+  # share of the frame budget. The training stills are NOT affected either way,
+  # because full_res_crops takes them from the camera frame, not the clip.
+  # Note the pre-roll buffer holds frames at THIS size, so full-res clips use a
+  # lot more RAM (~11 MB per frame at 1440p, ~330 MB for 1s at 30 fps) - lower
+  # motion.clip.pre_seconds if needed.
+  clip_width: auto
 
   # Take the car crop from the ORIGINAL full-resolution frame (sharper crops
   # for the inspector model) instead of the detection frame.

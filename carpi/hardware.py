@@ -42,6 +42,11 @@ LIGHT_CAPTURE_FPS = 10.0
 FULL_MOTION_WIDTH = 640
 LIGHT_MOTION_WIDTH = 320
 
+# The width clips are written at. Encoding is a real share of a weak board's
+# frame budget, so its clips are halved; a capable board keeps the source size
+# (None), where encoding is cheap and the clips are archive material.
+LIGHT_CLIP_WIDTH = 640
+
 # Pi generations at or above this one get the full profile.
 _FULL_PROFILE_GENERATION = 4
 
@@ -122,6 +127,16 @@ def default_motion_width(model: Optional[str] = None) -> int:
     the cheapest way to buy back real time.
     """
     return LIGHT_MOTION_WIDTH if _needs_light_profile(model) else FULL_MOTION_WIDTH
+
+
+def default_clip_width(model: Optional[str] = None) -> Optional[int]:
+    """The width clips are written at on this board.
+
+    640 on a Pi 3B, where encoding costs a real share of the frame; ``None``
+    (keep the source resolution) on a Pi 4/5 and on anything that is not a
+    Raspberry Pi.
+    """
+    return LIGHT_CLIP_WIDTH if _needs_light_profile(model) else None
 
 
 def resolve_capture_size(spec: str, model: Optional[str] = None) -> Tuple[int, int]:

@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
-from .hardware import default_motion_width
+from .hardware import default_clip_width, default_motion_width
 
 
 class ConfigError(ValueError):
@@ -60,6 +60,17 @@ def _motion_width(value: Any, ctx: str) -> Optional[int]:
     """
     if isinstance(value, str) and value.strip().lower() == "auto":
         return default_motion_width()
+    return _opt_width(value, ctx)
+
+
+def _clip_width(value: Any, ctx: str) -> Optional[int]:
+    """Parse the clip width: ``auto``, a number, or ``None`` (source size).
+
+    ``auto`` resolves here, against the board carpi is running on (see
+    ``carpi.hardware``): 640 on a Pi 3B, the source size elsewhere.
+    """
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return default_clip_width()
     return _opt_width(value, ctx)
 
 
@@ -447,7 +458,7 @@ def load_config(path: str | Path) -> AppConfig:
             proc.get("motion_width", motion_width_default), "processing.motion_width"
         ),
         detect_width=_opt_width(proc.get("detect_width", legacy_width), "processing.detect_width"),
-        clip_width=_opt_width(proc.get("clip_width", None), "processing.clip_width"),
+        clip_width=_clip_width(proc.get("clip_width", None), "processing.clip_width"),
         full_res_crops=_as_bool(proc.get("full_res_crops", True), "processing.full_res_crops"),
     )
 
