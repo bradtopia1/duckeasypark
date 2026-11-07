@@ -42,7 +42,7 @@ from .classifiers.base import ClassificationResult, InspectorClassifier
 from .config import AppConfig, MotionCropConfig
 from .crop import crop_bbox, scale_box
 from .detectors.base import CarDetector, Detection
-from .metadata import ManifestWriter, build_location_provider
+from .metadata import ManifestWriter, build_clock_provider, build_location_provider
 from .motion import BBox, MotionDetector, MotionResult
 from .thermal import cpu_temperature_c
 from .video import FrameSource, make_fourcc
@@ -253,6 +253,11 @@ class Pipeline:
         self.action_hook: ActionHook = action_hook or default_action_hook
         self.logger = log or logger
 
+        # Where the time in every filename and manifest line comes from. The
+        # machine clock for now, marked as a placeholder in the manifest; the
+        # rig's clock module takes over once it can be trusted.
+        self.clock = build_clock_provider(config.metadata.clock)
+
         self.output_dir = config.output_dir
         self.clips_dir = self.output_dir / "clips"
         self.cars_dir = self.output_dir / "cars"
@@ -269,7 +274,7 @@ class Pipeline:
         self._motion_size: Tuple[int, int] = (0, 0)
         self._detect_size: Tuple[int, int] = (0, 0)
         self._clip_size: Tuple[int, int] = (0, 0)
-        self._run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._run_stamp = self.clock.now().strftime("%Y%m%d_%H%M%S")
         # Set when a motion event begins, so a run stamped once and left to run
         # for days still names each clip (and its crops) by when it happened.
         self._event_stamp: Optional[str] = None
@@ -281,7 +286,9 @@ class Pipeline:
         if config.metadata.enabled:
             manifest_path = config.metadata.manifest_path or (self.output_dir / "manifest.jsonl")
             self.manifest = ManifestWriter(
-                manifest_path, build_location_provider(config.metadata.location)
+                manifest_path,
+                build_location_provider(config.metadata.location),
+                self.clock,
             )
 
         # Both modes pass the shared crop config; the sampler is simply absent
@@ -330,8 +337,9 @@ class Pipeline:
         if self.manifest is not None:
             self.logger.info(
                 "provenance: writing when/where for each clip and crop -> %s "
-                "(location source: %s)",
+                "(time source: %s, location source: %s)",
                 self.manifest.path,
+                self.manifest.clock.name,
                 self.manifest.location.name,
             )
 
@@ -383,7 +391,7 @@ class Pipeline:
             # The first moving frame of an event stamps it, so the clip, its
             # crops and the manifest all agree on when it happened.
             if result.motion and self._event_stamp is None:
-                self._event_time = datetime.now().astimezone()
+                self._event_time = self.clock.now()
                 self._event_stamp = self._event_time.strftime("%Y%m%d_%H%M%S")
 
             if self.crops is not None and result.motion:
@@ -391,7 +399,7 @@ class Pipeline:
                 self.crops.consider(
                     frame, clip_frame, result, event_index, index, stats,
                     self._event_stamp or self._run_stamp,
-                    self._event_time or datetime.now().astimezone(),
+                    self._event_time or self.clock.now(),
                 )
                 timing["crops"] += time.perf_counter() - stage_at
 
@@ -610,7 +618,7 @@ class Pipeline:
                 self.manifest.record(
                     kind="clip",
                     file=clip_path,
-                    timestamp=self._event_time or datetime.now().astimezone(),
+                    timestamp=self._event_time or self.clock.now(),
                     event=event_index,
                 )
             if recorder is not None and recorder.fps < self.fps * 0.95:
@@ -675,7 +683,7 @@ class Pipeline:
         )
 
         alert = InspectorAlert(
-            timestamp=datetime.now().isoformat(timespec="seconds"),
+            timestamp=self.clock.now().isoformat(timespec="seconds"),
             clip_path=clip_path or Path(),
             car_image_path=car_path,
             inspector_image_path=inspector_path,

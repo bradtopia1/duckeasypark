@@ -330,18 +330,32 @@ class LocationConfig:
 
 
 @dataclass(frozen=True)
+class ClockConfig:
+    """Where the wall-clock time comes from.
+
+    ``placeholder`` (the default) reads the machine clock, so every record is
+    populated before the rig's clock module can be trusted - it has no battery
+    yet. Once it can be believed, the module becomes one more backend here and
+    nothing else changes.
+    """
+
+    backend: str = "placeholder"
+
+
+@dataclass(frozen=True)
 class MetadataConfig:
     """When and where each clip and crop was recorded.
 
-    Time is read from the machine clock for now - a clock module or the GPS
-    itself will supply it later. Location comes from a placeholder provider
-    until a GPS exists. Both are written to a sidecar index (one JSON object
-    per line) rather than baked into the filename.
+    Time comes from ``clock`` - the machine clock for now, the rig's clock
+    module later. Location comes from a placeholder provider until a GPS exists.
+    Both are written to a sidecar index (one JSON object per line) rather than
+    baked into the filename.
     """
 
     enabled: bool = True
     manifest_path: Optional[Path] = None
     location: LocationConfig = field(default_factory=LocationConfig)
+    clock: ClockConfig = field(default_factory=ClockConfig)
 
 
 # --------------------------------------------------------------------------- #
@@ -502,11 +516,20 @@ def load_config(path: str | Path) -> AppConfig:
         ),
         options=dict(loc.get("options", {}) or {}),
     )
+    clock_raw = _section(meta, "clock")
+    clock = ClockConfig(
+        backend=_as_choice(
+            clock_raw.get("backend", "placeholder"),
+            "metadata.clock.backend",
+            ("placeholder",),
+        ),
+    )
     manifest_raw = meta.get("manifest_path", None)
     metadata = MetadataConfig(
         enabled=_as_bool(meta.get("enabled", True), "metadata.enabled"),
         manifest_path=None if manifest_raw is None else _resolve(str(manifest_raw), base_dir),
         location=location,
+        clock=clock,
     )
 
     # -- modes -------------------------------------------------------------- #

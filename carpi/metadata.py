@@ -3,9 +3,10 @@
 Two facts are recorded for every file, and both are placeholders for hardware
 the rig does not have yet:
 
-* **Time** comes from the machine clock. On a Pi with no RTC that clock is only
-  right once NTP (or a GPS fix) has set it; when a clock module or the GPS
-  arrives it will supply this instead.
+* **Time** comes from a :class:`ClockProvider`. With no trusted clock module
+  yet the default is a *placeholder* - the machine clock - which on a Pi with no
+  RTC is only right once NTP (or a GPS fix) has set it. The clock module on the
+  rig supplies this instead once it has a battery and can be believed.
 * **Location** comes from a :class:`LocationProvider`. With no GPS module wired
   up the default is a *placeholder* fix - one configured point (0, 0 by
   default) - so the records are always populated and the output shape is
@@ -18,8 +19,9 @@ reference; so the filename carries a compact, sortable timestamp and the exact
 time and coordinates go in the sidecar index - one JSON object per line, one
 line per clip and per crop.
 
-Wiring up a real GPS later means writing one more :class:`LocationProvider` and
-naming it in ``metadata.location.backend``; nothing else changes.
+Wiring up a real GPS or clock later means writing one more provider and naming
+it in ``metadata.location.backend`` / ``metadata.clock.backend``; nothing else
+changes.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Protocol
 
-from .config import ConfigError, LocationConfig
+from .config import ClockConfig, ConfigError, LocationConfig
 
 logger = logging.getLogger("carpi.metadata")
 
@@ -94,6 +96,41 @@ def build_location_provider(config: LocationConfig) -> LocationProvider:
     return NoFixProvider()
 
 
+class ClockProvider(Protocol):
+    """What time it is. ``name`` marks the source in the manifest."""
+
+    name: str
+
+    def now(self) -> datetime:
+        ...
+
+
+class PlaceholderClock:
+    """The machine clock, standing in for the rig's clock module.
+
+    Asked once when a motion event begins, so the clip and every crop from that
+    event share one timestamp. On the dev machine, and on a Pi that has synced
+    (NTP, or a GPS fix), this is the real time; on a Pi with no RTC and no
+    network it is only right once something has set it - which is why the
+    records mark it ``time_source: "placeholder"`` rather than passing it off as
+    the clock module's own reading.
+    """
+
+    name = "placeholder"
+
+    def now(self) -> datetime:
+        return datetime.now().astimezone()
+
+
+def build_clock_provider(config: ClockConfig) -> ClockProvider:
+    """Choose a time source from ``metadata.clock`` in the config.
+
+    Only the machine clock exists so far; the clock module becomes one more
+    branch here once it has a battery and can be trusted.
+    """
+    return PlaceholderClock()
+
+
 class ManifestWriter:
     """Appends one JSON object per file to a sidecar index.
 
@@ -101,9 +138,10 @@ class ManifestWriter:
     mid-event still leaves a readable record of everything written so far.
     """
 
-    def __init__(self, path: Path, location: LocationProvider) -> None:
+    def __init__(self, path: Path, location: LocationProvider, clock: ClockProvider) -> None:
         self.path = path
         self.location = location
+        self.clock = clock
 
     def record(
         self,
@@ -119,6 +157,7 @@ class ManifestWriter:
             "file": file.name,
             "kind": kind,
             "timestamp": timestamp.isoformat(),
+            "time_source": self.clock.name,
             "latitude": fix.latitude if fix else None,
             "longitude": fix.longitude if fix else None,
             "location_source": self.location.name,

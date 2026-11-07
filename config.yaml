@@ -122,9 +122,10 @@ logging:
 # change the name whenever the rig moves.
 #
 # Both facts are placeholders for hardware that is not on the rig yet: the time
-# is read from the machine clock (right only after NTP or a GPS fix on a Pi with
-# no RTC), and the location source reports no fix until a GPS module is wired
-# up. Adding one later means naming it in location.backend and nothing else.
+# is read from the machine clock - right only after NTP or a GPS fix on a Pi with
+# no RTC - and the location source reports no fix until a GPS module is wired up.
+# Adding one later means naming it in clock.backend / location.backend and
+# nothing else; the manifest line says which source each fact came from.
 # --------------------------------------------------------------------------- #
 metadata:
   enabled: true
@@ -132,6 +133,16 @@ metadata:
   # Where the sidecar index is written. Relative paths resolve against this
   # file; leave it out to default to <output_dir>/manifest.jsonl.
   # manifest_path: output/manifest.jsonl
+
+  # Where the timestamp in every filename and manifest line comes from.
+  clock:
+    # placeholder - the machine clock, standing in for the rig's clock module
+    #               (which has no battery yet, so it cannot be trusted). On a Pi
+    #               with no RTC it is only right once NTP or a GPS fix has set
+    #               it. The manifest marks these records time_source:
+    #               "placeholder" rather than passing them off as the module's
+    #               own reading.
+    backend: placeholder
 
   location:
     # placeholder - report one configured point (0, 0 unless set below), so the

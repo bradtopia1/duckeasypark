@@ -107,14 +107,16 @@ archive either way, so crops can always be regenerated.
 
 Every filename starts with a compact timestamp of the moment the motion event
 began (`20261103_071834_event000.mp4`), so a rig left running for days names
-each clip by when it happened rather than when the run started.
+each clip by when it happened rather than when the run started. The time comes
+from the `clock` source in the `metadata` section — the machine clock for now,
+the rig's clock module once it can be trusted (see below).
 
 The exact time and coordinates are deliberately **not** in the filename. They go
 in a sidecar index, `output/manifest.jsonl` — one JSON object per line, one line
 per clip and per crop:
 
 ```json
-{"file": "20261103_071834_event000.mp4", "kind": "clip", "timestamp": "2026-11-03T07:18:34.837668+11:00", "latitude": -37.8136, "longitude": 144.9631, "location_source": "fixed", "event": 0}
+{"file": "20261103_071834_event000.mp4", "kind": "clip", "timestamp": "2026-11-03T07:18:34.837668+11:00", "time_source": "placeholder", "latitude": -37.8136, "longitude": 144.9631, "location_source": "placeholder", "event": 0}
 ```
 
 Coordinates stay out of the name because they are long, lose precision once
@@ -126,6 +128,8 @@ quality) without renaming anything. It is controlled by the `metadata` section:
 metadata:
   enabled: true
   # manifest_path: output/manifest.jsonl   # default: <output_dir>/manifest.jsonl
+  clock:
+    backend: placeholder     # the machine clock for now
   location:
     backend: placeholder     # placeholder | none
     # options:               # only used by 'placeholder'
@@ -135,13 +139,16 @@ metadata:
 
 Both facts are stand-ins for hardware the rig does not have yet, so both are
 *always* populated in test mode regardless of what is plugged in. The time comes
-from the machine clock — on a Pi with no RTC that is only correct once NTP (or a
-GPS fix) has set it. The location comes from the `placeholder` backend, which
-reports one configured point (0, 0 by default); the `location_source` field in
-each manifest line marks it as a placeholder rather than a measurement, so the
-output is never mistaken for real coordinates. Set `location.backend: none` if
-you would rather the coordinates come out `null`. A real GPS later means adding
-one more backend and naming it here — nothing else changes.
+from the `clock` source — `placeholder`, the machine clock, which on a Pi with no
+RTC is only correct once NTP (or a GPS fix) has set it. The rig's clock module
+takes over once it has a battery and can be trusted: that is one more backend
+named in `clock.backend`, and the `time_source` field in each manifest line says
+which one produced the record. The location comes from the `location`
+`placeholder` backend, which reports one configured point (0, 0 by default); its
+`location_source` field marks it as a placeholder rather than a measurement, so
+the output is never mistaken for real coordinates. Set `location.backend: none`
+if you would rather the coordinates come out `null`. A real GPS later means
+adding one more backend and naming it here — nothing else changes.
 
 > The timestamp is wall-clock *processing* time. On the live camera that is the
 > real moment; replaying a file faster than `realtime` compresses the times, so
@@ -511,7 +518,7 @@ carpi/
   video.py                    FrameSource: FileSource (test) + CameraSource
   motion.py                   MOG2 motion detection + ROI + sensitivity
   crop.py                     bounding-box cropping
-  metadata.py                 provenance: per-event time + location sidecar manifest
+  metadata.py                 provenance: clock + location sources, sidecar manifest
   pipeline.py                 orchestrates the stages, saves outputs, action hook
   detectors/                  CarDetector interface + mock
   classifiers/                InspectorClassifier interface + mock + tflite
