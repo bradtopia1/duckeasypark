@@ -265,11 +265,6 @@ the whole picture of a run; on the Pi it all goes to the journal
 `carpi.log`, in the folder you run from (rotated at ~1 MB, keeping 3 backups, so
 an always-on rig won't fill the disk).
 
-If a display is sometimes plugged into the rig, that file can also be put on the
-screen from boot — see ["Show the log on an attached
-screen"](#5-show-the-log-on-an-attached-screen-optional) at the end of the
-deployment walkthrough.
-
 ## Configuration
 
 Everything lives in `config.yaml` (documented inline). The two settings that
@@ -514,42 +509,12 @@ sudo systemctl disable carpi    # stop starting it at boot
 After editing the unit file, re-run `sudo systemctl daemon-reload` for the
 change to take effect.
 
-### 5. Show the log on an attached screen (optional)
-
-The service sends carpi's output to the journal, so a monitor plugged into the
-rig shows nothing on its own. [`deploy/carpi-log.service`](deploy/carpi-log.service)
-puts the same log on the screen: it follows `carpi.log` onto the text console,
-which is what a monitor displays while the Pi is booted to a console, so the
-lines are there from boot and nothing needs to be typed:
-
-```bash
-cd ~/duckeasypark
-sudo cp deploy/carpi-log.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now carpi-log
-```
-
-It is one `tail` process that wakes only when a line is written, so it costs the
-pipeline nothing — the frame budget is untouched. Attach the display whenever you
-like: it shows the log as it stands and keeps updating as carpi works. Two
-expectations to set: the log's status lines are wider than an 80-column console
-and so wrap, and if the screen blanks after ten minutes, add `consoleblank=0` to
-`/boot/firmware/cmdline.txt` (Bullseye: `/boot/cmdline.txt`). Turn it off again
-with `sudo systemctl disable --now carpi-log`.
-
-> This shows nothing if the Pi boots to the **desktop** rather than a console —
-> the log is written to tty1, which the desktop covers. On the desktop image,
-> boot to a console instead (`sudo raspi-config` → System Options → Boot →
-> Console Autologin), or open a terminal on the desktop and run
-> `tail -F ~/duckeasypark/carpi.log` for the same output.
-
 ## Project layout
 
 ```
 main.py                       CLI entry point
 config.yaml                   configuration
 deploy/carpi.service          systemd unit for autostart on a Pi
-deploy/carpi-log.service      systemd unit showing the log on the console
 scripts/make_sample_video.py  synthetic test-clip generator
 carpi/
   config.py                   typed config loading/validation
