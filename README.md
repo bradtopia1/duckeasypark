@@ -77,7 +77,7 @@ collect from the camera while the rig watches.
 ```yaml
 crops:
   enabled: true
-  min_gap_frames: 20    # never save two crops closer together than this
+  min_gap_frames: 2     # never save two crops closer together than this
   iou_threshold: 0.85   # skip if the box still overlaps the last crop this much
   pad: 0.10             # grow the box by this fraction of its size
 ```
@@ -92,9 +92,13 @@ overlaps the previous one by 85%, and `min_gap_frames` caps the rate regardless.
 
 In practice `min_gap_frames` is what sets the volume, because a moving car's box
 changes by more than 15% between one crop and the next and the IoU gate rarely
-fires. At 30 fps, 20 frames is ~1.5 crops per second, so a car crossing in seven
-seconds gives roughly ten crops — distinct poses rather than near-duplicates.
-Lower it for more, raise it for fewer.
+fires. It counts **frames, not seconds**, so the same number means different
+things per board — and the right number comes from how long a car is actually in
+frame. A car passing ~3 m away at 30 km/h crosses the rig's 120° view in about
+1.2 s, so the old 20-frame gap was *longer than the crossing itself* on the 3B
+(15 fps) and yielded about one still per car; at 2 it yields ~9. Lower it for
+more, raise it for fewer, and remember each extra still is a JPEG write on the
+rig's frame budget (~14 ms on a Pi 3B), spent while the car is in frame.
 
 Note what is actually being cropped: the **motion region, not a car**. There is
 no car detector on that path, so pedestrians, animals and swaying branches land
@@ -260,6 +264,11 @@ the whole picture of a run; on the Pi it all goes to the journal
 (`journalctl -u carpi -f`). The same lines are also written to a log file,
 `carpi.log`, in the folder you run from (rotated at ~1 MB, keeping 3 backups, so
 an always-on rig won't fill the disk).
+
+If a display is sometimes plugged into the rig, that file can also be put on the
+screen from boot — see ["Show the log on an attached
+screen"](#5-show-the-log-on-an-attached-screen-optional) at the end of the
+deployment walkthrough.
 
 ## Configuration
 
@@ -505,12 +514,42 @@ sudo systemctl disable carpi    # stop starting it at boot
 After editing the unit file, re-run `sudo systemctl daemon-reload` for the
 change to take effect.
 
+### 5. Show the log on an attached screen (optional)
+
+The service sends carpi's output to the journal, so a monitor plugged into the
+rig shows nothing on its own. [`deploy/carpi-log.service`](deploy/carpi-log.service)
+puts the same log on the screen: it follows `carpi.log` onto the text console,
+which is what a monitor displays while the Pi is booted to a console, so the
+lines are there from boot and nothing needs to be typed:
+
+```bash
+cd ~/duckeasypark
+sudo cp deploy/carpi-log.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now carpi-log
+```
+
+It is one `tail` process that wakes only when a line is written, so it costs the
+pipeline nothing — the frame budget is untouched. Attach the display whenever you
+like: it shows the log as it stands and keeps updating as carpi works. Two
+expectations to set: the log's status lines are wider than an 80-column console
+and so wrap, and if the screen blanks after ten minutes, add `consoleblank=0` to
+`/boot/firmware/cmdline.txt` (Bullseye: `/boot/cmdline.txt`). Turn it off again
+with `sudo systemctl disable --now carpi-log`.
+
+> This shows nothing if the Pi boots to the **desktop** rather than a console —
+> the log is written to tty1, which the desktop covers. On the desktop image,
+> boot to a console instead (`sudo raspi-config` → System Options → Boot →
+> Console Autologin), or open a terminal on the desktop and run
+> `tail -F ~/duckeasypark/carpi.log` for the same output.
+
 ## Project layout
 
 ```
 main.py                       CLI entry point
 config.yaml                   configuration
 deploy/carpi.service          systemd unit for autostart on a Pi
+deploy/carpi-log.service      systemd unit showing the log on the console
 scripts/make_sample_video.py  synthetic test-clip generator
 carpi/
   config.py                   typed config loading/validation

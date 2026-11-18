@@ -93,10 +93,13 @@ crops:
 
   # A crop is kept only when the region has moved on since the last one, so a
   # slow car gives a handful of distinct poses instead of one image per frame.
-  min_gap_frames: 20      # never save two crops closer together than this.
-                          # This is what sets the rate in practice: at 30 fps
-                          # 20 frames is ~1.5 crops/second, so a car crossing
-                          # in 7 seconds gives roughly 10 crops.
+  # This is what sets the rate in practice - the IoU gate below rarely fires for
+  # a moving car. It counts FRAMES, not seconds, so the same value means
+  # different things per board: 2 is ~0.13 s at 30 fps, and the same at the 3B's
+  # 15 fps. A car passing ~3 m away at 30 km/h is only in frame ~1.2 s, so the
+  # old 20-frame gap gave the 3B about one still per car; 2 gives ~9. Each extra
+  # still costs ~14 ms on a 3B, spent while the car is in frame.
+  min_gap_frames: 2       # never save two crops closer together than this
   iou_threshold: 0.85     # skip if the box still overlaps the last crop this much
   pad: 0.10               # grow the box by this fraction of its size
 
