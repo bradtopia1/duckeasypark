@@ -1,0 +1,40 @@
+# carpi-log systemd unit - shows carpi's log on a screen plugged into the rig.
+#
+# carpi runs under systemd with its output going to the journal (see
+# carpi.service), so a display attached to the Pi shows nothing on its own.
+# This unit follows the same log file onto the text console (tty1), which is
+# what a monitor shows when the Pi boots to a console. It costs the pipeline
+# nothing: one `tail` process, woken only when a line is written.
+#
+# Install (edit the path below if your project folder differs):
+#   sudo cp deploy/carpi-log.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now carpi-log
+#
+# Turn it off again with: sudo systemctl disable --now carpi-log
+#
+# Nothing appears on screen if the Pi boots to the desktop instead of a text
+# console - see the README for the alternatives.
+
+[Unit]
+Description=carpi log on the console screen
+Documentation=file:///home/brad/duckeasypark/README.md
+# The file this follows is written by carpi, so start after it.
+After=carpi.service
+
+[Service]
+Type=simple
+# -F (not -f) is deliberate twice over: it keeps following across carpi.log's
+# rotation, and it waits for the file to appear instead of exiting when carpi
+# has not created it yet.
+ExecStart=/usr/bin/tail -F -n 200 /home/brad/duckeasypark/carpi.log
+# Onto the console rather than the journal - that is the screen.
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+# tail only leaves if the console goes away; come back when it does.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
